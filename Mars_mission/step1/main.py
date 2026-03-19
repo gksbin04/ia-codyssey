@@ -157,6 +157,7 @@ if __name__ == '__main__':
 
         reverse_lines = sort_log_data(log_lines)
         save_log_to_file(REVERSE_FILE, reverse_lines)
+        print_log(reverse_lines)
 
         numbered_content = add_line_numbers(log_lines)
         problem_data = extract_problem_logs(numbered_content)
