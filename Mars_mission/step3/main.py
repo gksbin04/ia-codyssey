@@ -1,6 +1,7 @@
 INVENTORY_FILE_PATH = 'Mars_Base_Inventory_List.csv'
 BINARY_FILE_PATH = 'Mars_Base_Inventory_List.bin'
 DANGER_FILE_PATH = 'Mars_Base_Inventory_danger.csv'
+DANGER_THRESHOLD = 0.7
 
 
 def parse_line(line):
@@ -56,8 +57,6 @@ def read_csv(file_path):
         print(f'권한 오류: {file_path}')
     except IOError:
         print(f'입출력 오류 발생: {file_path}')
-    
-    # 에러 발생 시 main에서 언패킹 에러가 나지 않도록 빈 값 반환
     return [], [], -1
 
 
@@ -82,7 +81,7 @@ def filter_danger_items(inventory_list, flam_idx):
         return danger_list
         
     for row in inventory_list:
-        if row[flam_idx] >= 0.7:
+        if row[flam_idx] >= DANGER_THRESHOLD:
             danger_list.append(row)
     return danger_list
 
