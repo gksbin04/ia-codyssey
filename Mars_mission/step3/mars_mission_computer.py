@@ -27,9 +27,9 @@ class DummySensor:
                 self.header_exists = f.readline() != ''
         except FileNotFoundError:
             self.header_exists = False
-            
+
         self._mission_count = 0
-        
+
         self._start_total_seconds = (START_HOUR * 3600) + (START_MIN * 60) + START_SEC
         self._env_values = {key: 0 for key in self._ENV_METADATA}
 
@@ -56,22 +56,22 @@ class DummySensor:
                 header = ', '.join(self._ENV_METADATA.keys()) + '\n'
                 f.write(header)
                 self.header_exists = True
-            
+
             values = [str(self._env_values[key]) for key in self._ENV_METADATA]
             log_line = ', '.join(values) + '\n'
             f.write(log_line)
-            
+
         return self._env_values
     
-    
+
 def main():
     ds = DummySensor()
     print('--- 화성 기지 미션 컴퓨터 가동 ---')
-    
+
     for i in range(TOTAL_MEASUREMENTS):
         ds.set_env()
         data = ds.get_env()
-        
+
         print(f'\n[{i+1}/{TOTAL_MEASUREMENTS}] 측정 완료 시각: {data["Time_Stamp"]}')
 
         for key, value in data.items():
