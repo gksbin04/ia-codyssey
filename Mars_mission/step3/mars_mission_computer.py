@@ -1,7 +1,7 @@
 import random
 
 LOG_FILE = 'mission.log'
-TOTAL_MEASUREMENTS = 3
+TOTAL_MEASUREMENTS = 50
 
 START_HOUR = 2
 START_MIN = 40
