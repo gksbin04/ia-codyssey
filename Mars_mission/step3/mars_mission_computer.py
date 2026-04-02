@@ -1,12 +1,13 @@
 import random
 
 LOG_FILE = 'mission.log'
-TOTAL_MEASUREMENTS = 50
+TOTAL_MEASUREMENTS = 20
 
 START_DATE = '2026-04-02'
-START_TIME = '02:40:30'
+START_TIME = '07:42:30'
 TIME_STEP_SEC = 10
 
+ITERATIONS_PER_SEC = 7000000
 
 class MarsClock:
     @staticmethod
@@ -58,22 +59,6 @@ class DummySensor:
         self.header_exists = False
         self._env_values = {key: 0 for key in self._ENV_METADATA}
 
-        try:
-            with open(LOG_FILE, 'r') as f:
-                lines = [l for l in f if l.strip()]
-                if lines:
-                    self.header_exists = True
-                    parts = lines[-1].split(', ')
-                    if len(parts) >= 2 and parts[0] != 'Date':
-                        self._date = parts[0]
-                        self._time = parts[1]
-        except FileNotFoundError:
-            self.header_exists = False
-        except (PermissionError, OSError):
-            print('로그 파일을 읽을 수 없습니다. 권한을 확인하세요.')
-        except Exception as e:
-            print(f'예상치 못한 오류 발생: {e}')
-
     def set_env(self):
         for key, info in self._ENV_METADATA.items():
             if 'range' in info:
@@ -89,6 +74,23 @@ class DummySensor:
         )
         self._env_values['Date'] = self._date
         self._env_values['Time'] = self._time
+
+        try:
+            with open(LOG_FILE, 'r') as f:
+                lines = [l for l in f if l.strip()]
+                if lines:
+                    self.header_exists = True
+                    parts = lines[-1].split(', ')
+                    if len(parts) >= 2 and parts[0] != 'Date':
+                        self._date = parts[0]
+                        self._time = parts[1]
+
+        except FileNotFoundError:
+            self.header_exists = False
+        except (PermissionError, OSError):
+            print('로그 파일을 읽을 수 없습니다. 권한을 확인하세요.')
+        except Exception as e:
+            print(f'예상치 못한 오류 발생: {e}')
 
         try:
             with open(LOG_FILE, 'a') as f:
@@ -111,6 +113,11 @@ def main():
     print(f'기준 시간: {gt_date} {gt_time} ({TIME_STEP_SEC}초 간격 시작)')
 
     for i in range(TOTAL_MEASUREMENTS):
+        for s in range(1, TIME_STEP_SEC + 1):
+            print(f'\r... {s}초 동안 데이터 수집 중 ...', end='', flush=True)
+            for _ in range(ITERATIONS_PER_SEC):
+                pass
+        
         ds.set_env()
         data = ds.get_env()
 
