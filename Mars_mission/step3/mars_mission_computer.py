@@ -1,6 +1,6 @@
 import random
 
-LOG_FILE = 'mission.log'
+LOG_FILE = 'mission_log.csv'
 TOTAL_MEASUREMENTS = 20
 
 START_DATE = '2026-04-02'
@@ -13,7 +13,7 @@ class MarsClock:
     @staticmethod
     def is_leap_year(year):
         return (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0)
-
+ 
     @staticmethod
     def add_seconds(date_str, time_str, sec):
         y, m, d = map(int, date_str.split('-'))
