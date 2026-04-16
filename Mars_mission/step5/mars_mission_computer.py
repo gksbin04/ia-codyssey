@@ -4,6 +4,7 @@ import subprocess
 import ctypes
 import logging
 from logging.handlers import RotatingFileHandler
+import json
 
 
 class Config:
@@ -151,13 +152,11 @@ class MissionComputer:
 
     def record_data(self, data_dict):
         """수집된 데이터를 로거를 통해 파일에 기록합니다."""
-        import json
         single_line_json = json.dumps(data_dict, ensure_ascii=False)
         self.logger.info(single_line_json)
 
     def display_data(self, data_dict):
         """수집된 데이터를 터미널에 JSON 형태로 출력합니다."""
-        import json
         print(json.dumps(data_dict, ensure_ascii=False, indent=4))
 
     def generate_cpu_load(self):
@@ -174,7 +173,6 @@ class MissionComputer:
     def get_setting_keys(self):
         """setting.txt 파일에서 출력할 항목의 키(Key)와 참/거짓 설정(JSON)을 가져옵니다."""
         try:
-            import json
             with open(Config.SETTING_FILE, 'r', encoding='utf-8') as f:
                 content = f.read()
                 
