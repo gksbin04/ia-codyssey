@@ -1,5 +1,3 @@
-import time
-import random
 import platform
 import os
 import subprocess
