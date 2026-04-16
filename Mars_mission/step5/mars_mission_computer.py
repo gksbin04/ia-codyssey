@@ -1,10 +1,10 @@
-import platform
+import json
 import os
-import subprocess
+import platform
 import ctypes
+import subprocess
 import logging
 from logging.handlers import RotatingFileHandler
-import json
 
 
 class Config:
@@ -13,6 +13,16 @@ class Config:
     MAX_LOG_SIZE = 5 * 1024 * 1024  # 5MB
     BACKUP_COUNT = 3
     SETTING_FILE = 'setting.txt'
+
+    DISPLAY_NAMES = {
+        'os': '운영체계',
+        'os_ver': '운영체계 버전',
+        'cpu_type': 'CPU의 타입',
+        'cores': 'CPU의 코어 수',
+        'mem_total': '메모리의 크기',
+        'cpu_load': 'CPU 실시간 사용량',
+        'mem_load': '메모리 실시간 사용량'
+    }
 
 
 class SystemProvider:
@@ -171,51 +181,26 @@ class MissionComputer:
             print('\n부하 발생 중지....')
 
     def get_setting_keys(self):
-        """setting.txt 파일에서 출력할 항목의 키(Key)와 참/거짓 설정(JSON)을 가져옵니다."""
         try:
             with open(Config.SETTING_FILE, 'r', encoding='utf-8') as f:
-                content = f.read()
-                
-            # parsing `info = {...}` and `load = {...}` logic
-            settings = {}
-            lines = content.splitlines()
-            current_dict_str = ""
-            parsing = False
-            for line in lines:
-                line = line.strip()
-                if not line or line.startswith('#'):
-                    continue
-                if '=' in line and '{' in line:
-                    parsing = True
-                    current_dict_str = "{"
-                elif parsing:
-                    current_dict_str += line
-                    if '}' in line:
-                        parsing = False
-                        # 파이썬에서 JS-like boolean 값(true/false)을 읽기 위해 대소문자 변환 없이 일단 시도
-                        current_dict_str = current_dict_str.replace("true", "true").replace("false", "false")
-                        try:
-                            loaded = json.loads(current_dict_str)
-                            settings.update(loaded)
-                        except Exception as e:
-                            logging.error(f'Setting JSON Parse Error: {e}')
-                        current_dict_str = ""
-                        
+                # 수동 파싱 대신 표준 라이브러리 활용
+                import json
+                settings = json.load(f)
             return [k for k, v in settings.items() if v]
-        except FileNotFoundError:
+        except (FileNotFoundError, json.JSONDecodeError):
             return None
 
     def _collect_info_data(self):
         """시스템 하드웨어 정보 데이터를 순수하게 수집하여 딕셔너리로 반환합니다."""
         info = {}
         try:
-            info['운영체계'] = SystemInfo.get_os()
-            info['운영체계 버전'] = SystemInfo.get_os_version()
-            info['CPU의 타입'] = SystemInfo.get_cpu_type()
-            info['CPU의 코어 수'] = getattr(SystemInfo, 'get_cpu_core_count')()
-            info['메모리의 크기'] = getattr(SystemInfo, 'get_memory_size')()
+            info[Config.DISPLAY_NAMES['os']] = SystemInfo.get_os()
+            info[Config.DISPLAY_NAMES['os_ver']] = SystemInfo.get_os_version()
+            info[Config.DISPLAY_NAMES['cpu_type']] = SystemInfo.get_cpu_type()
+            info[Config.DISPLAY_NAMES['cores']] = SystemInfo.get_cpu_core_count()
+            info[Config.DISPLAY_NAMES['mem_total']] = SystemInfo.get_memory_size()
         except Exception as e:
-            info['error'] = f'시스템 정보를 가져오는데 실패했습니다: {e}'
+            info['error'] = f'시스템 정보 수집 실패: {e}'
         return info
 
     def get_mission_computer_info(self):
