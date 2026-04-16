@@ -181,10 +181,9 @@ class MissionComputer:
             print('\n부하 발생 중지....')
 
     def get_setting_keys(self):
+        """setting.txt 파일에서 출력할 항목의 키(Key)와 참/거짓 설정(JSON)을 가져옵니다."""
         try:
             with open(Config.SETTING_FILE, 'r', encoding='utf-8') as f:
-                # 수동 파싱 대신 표준 라이브러리 활용
-                import json
                 settings = json.load(f)
             return [k for k, v in settings.items() if v]
         except (FileNotFoundError, json.JSONDecodeError):
