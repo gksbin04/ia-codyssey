@@ -1,0 +1,12 @@
+info = {
+    "운영체계": true,
+    "운영체계 버전": true,
+    "CPU의 타입": true,
+    "CPU의 코어 수": true,
+    "메모리의 크기": true
+}
+
+load = {
+    "CPU 실시간 사용량": true,
+    "메모리 실시간 사용량": true
+}
