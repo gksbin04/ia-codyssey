@@ -6,6 +6,39 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 
+# --- 스타일 및 레이아웃 상수 정의 ---
+WIN_WIDTH = 350
+WIN_HEIGHT = 500
+
+STYLE_BG_MAIN = 'background-color: black;'
+STYLE_DISPLAY_MAIN = (
+    'font-size: 60px; padding: 10px; '
+    'border: none; background-color: black; color: white;'
+)
+STYLE_DISPLAY_EXPR = (
+    'font-size: 20px; padding: 0 10px; '
+    'border: none; background-color: black; color: #a0a0a0;'
+)
+
+COLOR_NUM_BG = '#333333'
+COLOR_NUM_PRESSED = '#737373'
+COLOR_NUM_TEXT = 'white'
+
+COLOR_OP_BG = '#FF9F0A'
+COLOR_OP_PRESSED = '#FCC78F'
+COLOR_OP_ACTIVE_BG = 'white'
+COLOR_OP_ACTIVE_TEXT = '#FF9F0A'
+COLOR_OP_TEXT = 'white'
+
+COLOR_FUNC_BG = '#A5A5A5'
+COLOR_FUNC_PRESSED = '#D9D9D9'
+COLOR_FUNC_TEXT = 'black'
+
+BTN_RADIUS = 35
+BTN_FONT_LARGE = 32
+BTN_FONT_MEDIUM = 28
+BTN_FONT_SMALL = 24
+
 
 class Calculator(QWidget):
     def __init__(self):
@@ -17,53 +50,63 @@ class Calculator(QWidget):
         self.last_operand = None
         self.new_input_expected = False
 
-        # 버튼 위젯을 저장하여 스타일을 동적으로 변경하기 위한 딕셔너리
         self.operator_buttons = {}
 
-        # 버튼 기본 스타일 정의
         self.style_number = (
-            'QPushButton { background-color: #333333; color: white; '
-            'border-radius: 35px; font-size: 28px; } '
-            'QPushButton:pressed { background-color: #737373; }'
+            f'QPushButton {{ background-color: {COLOR_NUM_BG}; '
+            f'color: {COLOR_NUM_TEXT}; border-radius: {BTN_RADIUS}px; '
+            f'font-size: {BTN_FONT_MEDIUM}px; }} '
+            f'QPushButton:pressed {{ background-color: {COLOR_NUM_PRESSED}; }}'
         )
         self.style_zero = (
-            'QPushButton { background-color: #333333; color: white; '
-            'border-radius: 35px; font-size: 28px; text-align: left; '
-            'padding-left: 30px; } '
-            'QPushButton:pressed { background-color: #737373; }'
+            f'QPushButton {{ background-color: {COLOR_NUM_BG}; '
+            f'color: {COLOR_NUM_TEXT}; border-radius: {BTN_RADIUS}px; '
+            f'font-size: {BTN_FONT_MEDIUM}px; text-align: left; '
+            f'padding-left: 30px; }} '
+            f'QPushButton:pressed {{ background-color: {COLOR_NUM_PRESSED}; }}'
         )
         self.style_operator = (
-            'QPushButton { background-color: #FF9F0A; color: white; '
-            'border-radius: 35px; font-size: 32px; } '
-            'QPushButton:pressed { background-color: #FCC78F; }'
+            f'QPushButton {{ background-color: {COLOR_OP_BG}; '
+            f'color: {COLOR_OP_TEXT}; border-radius: {BTN_RADIUS}px; '
+            f'font-size: {BTN_FONT_LARGE}px; }} '
+            f'QPushButton:pressed {{ background-color: {COLOR_OP_PRESSED}; }}'
         )
         self.style_operator_active = (
-            'QPushButton { background-color: white; color: #FF9F0A; '
-            'border-radius: 35px; font-size: 32px; }'
+            f'QPushButton {{ background-color: {COLOR_OP_ACTIVE_BG}; '
+            f'color: {COLOR_OP_ACTIVE_TEXT}; border-radius: {BTN_RADIUS}px; '
+            f'font-size: {BTN_FONT_LARGE}px; }}'
         )
         self.style_function = (
-            'QPushButton { background-color: #A5A5A5; color: black; '
-            'border-radius: 35px; font-size: 24px; } '
-            'QPushButton:pressed { background-color: #D9D9D9; }'
+            f'QPushButton {{ background-color: {COLOR_FUNC_BG}; '
+            f'color: {COLOR_FUNC_TEXT}; border-radius: {BTN_RADIUS}px; '
+            f'font-size: {BTN_FONT_SMALL}px; }} '
+            f'QPushButton:pressed {{ '
+            f'background-color: {COLOR_FUNC_PRESSED}; }}'
         )
 
         self.init_ui()
 
     def init_ui(self):
         self.setWindowTitle('Calculator')
-        self.resize(350, 500)
-        self.setStyleSheet('background-color: black;')
+        self.setFixedSize(WIN_WIDTH, WIN_HEIGHT)
+        self.setStyleSheet(STYLE_BG_MAIN)
 
         vbox = QVBoxLayout()
         vbox.setContentsMargins(10, 10, 10, 10)
 
+        self.expr_label = QLineEdit('')
+        self.expr_label.setReadOnly(True)
+        self.expr_label.setAlignment(Qt.AlignRight)
+        self.expr_label.setStyleSheet(STYLE_DISPLAY_EXPR)
+        self.expr_label.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Fixed
+        )
+        vbox.addWidget(self.expr_label)
+
         self.display = QLineEdit('0')
         self.display.setReadOnly(True)
         self.display.setAlignment(Qt.AlignRight)
-        self.display.setStyleSheet(
-            'font-size: 60px; padding: 10px; '
-            'border: none; background-color: black; color: white;'
-        )
+        self.display.setStyleSheet(STYLE_DISPLAY_MAIN)
         self.display.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Expanding
         )
@@ -85,12 +128,7 @@ class Calculator(QWidget):
             ('=', 4, 3, 'operator_eq')
         ]
 
-        for btn_data in buttons:
-            text = btn_data[0]
-            row = btn_data[1]
-            col = btn_data[2]
-            btn_type = btn_data[3]
-
+        for text, row, col, btn_type in buttons:
             btn = QPushButton(text)
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
@@ -116,8 +154,8 @@ class Calculator(QWidget):
             grid.setRowStretch(i, 1)
 
         vbox.addLayout(grid)
-        vbox.setStretch(0, 1)
-        vbox.setStretch(1, 4)
+        vbox.setStretch(1, 1)
+        vbox.setStretch(2, 4)
 
         self.setLayout(vbox)
 
@@ -141,10 +179,10 @@ class Calculator(QWidget):
             if self.current_input and not self.new_input_expected:
                 self.current_input = self.current_input[:-1]
                 if not self.current_input or self.current_input == '-':
-                    self.display.setText('0')
+                    self.update_display('0')
                     self.current_input = ''
                 else:
-                    self.display.setText(self.current_input)
+                    self.update_display(self.current_input)
 
     def on_button_click(self):
         sender = self.sender()
@@ -170,16 +208,37 @@ class Calculator(QWidget):
             else:
                 btn.setStyleSheet(self.style_operator)
 
+    def format_for_display(self, text):
+        if not text or text == 'Error':
+            return text
+        if 'e' in text.lower():
+            return text
+
+        is_negative = text.startswith('-')
+        body = text[1:] if is_negative else text
+
+        if '.' in body:
+            int_part, dec_part = body.split('.', 1)
+            int_formatted = f"{int(int_part):,}" if int_part else "0"
+            result = f"{int_formatted}.{dec_part}"
+        else:
+            if not body:
+                result = ""
+            else:
+                result = f"{int(body):,}"
+
+        return f"-{result}" if is_negative else result
+
+    def update_display(self, text):
+        self.display.setText(self.format_for_display(text))
+
     def format_result(self, val_str):
-        # 불필요한 소수점 이하의 0을 제거하는 포맷팅 함수 (1E+1 방지)
         if '.' in val_str and 'e' not in val_str.lower():
             val_str = val_str.rstrip('0').rstrip('.')
 
-        # 길이가 9자리를 초과하면 지수 표기법으로 변환
         digits_only = val_str.replace('.', '').replace('-', '')
         if len(digits_only) > 9:
             try:
-                # 안전하게 변환 가능한 경우만 지수 표기 적용
                 decimal_val = Decimal(val_str)
                 val_str = f"{decimal_val:.5e}"
             except InvalidOperation:
@@ -206,78 +265,101 @@ class Calculator(QWidget):
         else:
             self.current_input += text
 
-        self.display.setText(self.current_input)
+        self.update_display(self.current_input)
 
     def handle_clear(self):
         self.current_input = ''
         self.previous_input = ''
         self.operator = None
         self.new_input_expected = False
-        self.display.setText('0')
+        self.update_display('0')
+        self.expr_label.setText('')
         self.update_operator_styles(None)
 
     def handle_sign(self):
-        current_text = self.display.text()
-        if current_text == '0' or current_text == 'Error':
+        raw_text = self.current_input or self.previous_input
+        if not raw_text or raw_text == '0':
             return
 
-        if current_text.startswith('-'):
-            new_text = current_text[1:]
+        if raw_text.startswith('-'):
+            new_text = raw_text[1:]
         else:
-            new_text = '-' + current_text
+            new_text = '-' + raw_text
 
-        self.display.setText(new_text)
-        # 결과값에 대해서 부호를 바꾼 것이라면, current_input도 동기화
         self.current_input = new_text
+        self.update_display(new_text)
 
     def handle_percent(self):
+        target = self.current_input or self.previous_input
+        if not target:
+            target = '0'
+
         try:
-            val = Decimal(self.display.text()) / Decimal('100')
+            val = Decimal(target) / Decimal('100')
             result_str = self.format_result(str(val))
-            self.display.setText(result_str)
             self.current_input = result_str
+            self.update_display(result_str)
             self.new_input_expected = True
         except InvalidOperation:
             pass
 
     def handle_operator(self, text):
-        # 방금 연산자를 눌렀는데 또 다른 연산자를 누른 경우 연산자만 교체
         if self.new_input_expected and self.operator:
             self.operator = text
             self.last_operator = text
             self.update_operator_styles(text)
+            fmt_prev = self.format_for_display(self.previous_input)
+            self.expr_label.setText(f"{fmt_prev} {text}")
             return
 
         if self.operator:
             self.calculate_result()
 
-        self.previous_input = self.display.text()
+        active_input = self.current_input or self.previous_input
+        if not active_input:
+            active_input = '0'
+
+        self.previous_input = active_input
         self.operator = text
         self.last_operator = text
         self.new_input_expected = True
         self.update_operator_styles(text)
+        fmt_prev = self.format_for_display(self.previous_input)
+        self.expr_label.setText(f"{fmt_prev} {text}")
 
     def calculate_result(self):
         self.update_operator_styles(None)
 
+        expr_text = ""
+        active_input = self.current_input or self.previous_input
+        if not active_input:
+            active_input = '0'
+
         if self.operator:
-            # 새로운 계산
             try:
                 num1 = Decimal(self.previous_input)
-                num2 = Decimal(self.display.text())
+                num2 = Decimal(active_input)
                 self.last_operand = num2
+                fmt_active = self.format_for_display(active_input)
+                expr_text = (
+                    f"{self.format_for_display(self.previous_input)} "
+                    f"{self.operator} {fmt_active} ="
+                )
             except InvalidOperation:
                 return
         elif self.last_operator and self.last_operand is not None:
-            # '=' 버튼 연속 누름 (이전 연산 반복)
             try:
-                num1 = Decimal(self.display.text())
+                num1 = Decimal(active_input)
                 num2 = self.last_operand
                 self.operator = self.last_operator
+                fmt_num2 = self.format_for_display(str(num2))
+                expr_text = (
+                    f"{self.format_for_display(active_input)} "
+                    f"{self.operator} {fmt_num2} ="
+                )
             except InvalidOperation:
                 return
         else:
-            # 연산자 없이 '=' 누른 경우
             return
 
         try:
@@ -293,29 +375,35 @@ class Calculator(QWidget):
                 if num2 != Decimal('0'):
                     result = num1 / num2
                 else:
-                    self.display.setText('Error')
+                    self.update_display('Error')
                     self.new_input_expected = True
                     self.operator = None
+                    self.expr_label.setText('')
                     return
 
             result_str = self.format_result(str(result))
 
             self.current_input = result_str
-            self.display.setText(self.current_input)
+            self.update_display(self.current_input)
             self.previous_input = result_str
             self.new_input_expected = True
 
-            # 다음 입력을 위해 현재 operator 초기화 (단, last_operator는 유지)
+            self.expr_label.setText(expr_text)
             self.operator = None
 
         except InvalidOperation:
-            self.display.setText('Error')
+            self.update_display('Error')
             self.new_input_expected = True
             self.operator = None
+            self.expr_label.setText('')
+ 
 
-
-if __name__ == '__main__':
+def main():
     app = QApplication(sys.argv)
     ex = Calculator()
     ex.show()
     sys.exit(app.exec_())
+
+
+if __name__ == '__main__':
+    main()
