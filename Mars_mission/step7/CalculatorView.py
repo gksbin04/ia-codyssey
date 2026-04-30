@@ -4,6 +4,11 @@ from PyQt5.QtGui import QFont, QFontMetrics
 import styles
 
 class CalculatorView(QWidget):
+    """
+    사용자에게 보여지는 UI 화면을 구성하고 입력을 감지하는 View 클래스입니다.
+    계산 로직은 전혀 알지 못하며, 입력 신호를 Controller로 전달(emit)하기만 합니다.
+    """
+
     input_signal = pyqtSignal(str)
 
     def __init__(self):
@@ -11,17 +16,24 @@ class CalculatorView(QWidget):
         self.operator_buttons = {}
         self.init_ui()
 
+    # ── 1. UI 초기화 및 레이아웃 구성 ──
+
     def init_ui(self):
         self.setWindowTitle('Calculator')
         self.setFixedSize(styles.Dimensions.WIN_WIDTH, styles.Dimensions.WIN_HEIGHT)
         self.setStyleSheet(styles.StyleSheets.MAIN_WINDOW)
 
         vbox = QVBoxLayout()
+        self._setup_display_area(vbox)
+        self._setup_button_area(vbox)
+        self.setLayout(vbox)
+
+    def _setup_display_area(self, layout):
         self.expr_label = QLineEdit('')
         self.expr_label.setReadOnly(True)
         self.expr_label.setAlignment(Qt.AlignRight)
         self.expr_label.setStyleSheet(styles.StyleSheets.EXPR)
-        vbox.addWidget(self.expr_label)
+        layout.addWidget(self.expr_label)
 
         self.display = QLineEdit('0')
         self.display.setReadOnly(True)
@@ -30,10 +42,12 @@ class CalculatorView(QWidget):
         self.display.setFont(QFont('Arial', styles.Fonts.DISPLAY))
         self.display.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.display.setFixedHeight(styles.Dimensions.DISPLAY_HEIGHT)
-        vbox.addWidget(self.display)
+        layout.addWidget(self.display)
 
+    def _setup_button_area(self, layout):
         grid = QGridLayout()
         grid.setSpacing(styles.Dimensions.SPACING)
+        
         buttons = [
             ('AC', 0, 0, 'function'), ('+/-', 0, 1, 'function'), ('%', 0, 2, 'function'), ('÷', 0, 3, 'operator'),
             ('7', 1, 0, 'number'), ('8', 1, 1, 'number'), ('9', 1, 2, 'number'), ('×', 1, 3, 'operator'),
@@ -62,9 +76,10 @@ class CalculatorView(QWidget):
             else:
                 grid.addWidget(btn, row, col)
 
-        vbox.addLayout(grid)
-        vbox.setStretch(2, 4)
-        self.setLayout(vbox)
+        layout.addLayout(grid)
+        layout.setStretch(2, 4)
+
+    # ── 2. 사용자 이벤트 핸들링 ──
 
     def on_button_click(self):
         self.input_signal.emit(self.sender().text())
@@ -81,6 +96,8 @@ class CalculatorView(QWidget):
             self.input_signal.emit('BS')
         elif text:
             self.input_signal.emit(text)
+
+    # ── 3. 화면 렌더링 및 스타일 업데이트 ──
 
     def update_display(self, formatted_text):
         # 렌더링 타이밍 이슈 방지를 위해 윈도우 상수를 기반으로 안전한 최대 너비 계산

@@ -1,8 +1,15 @@
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 class CalculatorModel:
+    """
+    계산기의 핵심 비즈니스 로직(상태 및 수학 연산)을 담당하는 Model 클래스입니다.
+    UI(View)와 완전히 분리되어 독립적으로 동작하며, 단위 테스트가 가능합니다.
+    """
+
     def __init__(self):
         self.reset()
+
+    # ── 1. 상태 관리 및 초기화 ──
 
     def reset(self):
         self.current_input = ''
@@ -13,6 +20,8 @@ class CalculatorModel:
         self.new_input_expected = False
         self.error_state = False
         self.expression = ''
+
+    # ── 2. 사용자 입력 처리 ──
 
     def input_character(self, char):
         if self.error_state:
@@ -34,6 +43,8 @@ class CalculatorModel:
             self.current_input = char
         else:
             self.current_input += char
+
+    # ── 3. 부가 기능 (명세 메소드) ──
 
     def negative_positive(self):
         if self.error_state:
@@ -62,6 +73,8 @@ class CalculatorModel:
         except InvalidOperation:
             self.error_state = True
 
+    # ── 4. 사칙연산 (명세 메소드) ──
+
     def add(self):
         self.set_operator('+')
 
@@ -85,6 +98,8 @@ class CalculatorModel:
             self.current_input = self.current_input[:-1]
             if not self.current_input or self.current_input == '-':
                 self.current_input = ''
+
+    # ── 5. 내부 연산 엔진 ──
 
     def set_operator(self, op):
         if self.error_state:
@@ -164,6 +179,8 @@ class CalculatorModel:
             self.new_input_expected = True
         except (ZeroDivisionError, Exception):
             self.error_state = True
+
+    # ── 6. 데이터 포맷팅 및 반환 ──
 
     def _format_result(self, val_str):
         if 'e' in val_str.lower():
