@@ -44,15 +44,12 @@ def password_to_index(password: str) -> int:
     '''
     문자열 암호를 n진법 숫자로 치환하여 고유 인덱스를 생성합니다.
     '''
-    if len(password) != PASSWORD_LENGTH:
-        raise ValueError(f'비밀번호 길이는 {PASSWORD_LENGTH}자여야 합니다.')
+    password = password.lower()
+    if len(password) != PASSWORD_LENGTH or any(char not in CHARSET for char in password):
+        raise ValueError(f'비밀번호는 {PASSWORD_LENGTH}자리의 유효한 영숫자로만 구성되어야 합니다.')
     
-    value = 0
-    for char in password:
-        if char not in CHARSET:
-            raise ValueError(f"'{char}'는 유효한 문자가 아닙니다.")
-        value = (value * BASE) + CHARSET.index(char)
-    return value
+    # 파이썬 내장 함수인 int()를 활용해 N진법 문자열을 C언어 속도로 즉시 정수 변환합니다.
+    return int(password, BASE)
 
 def index_to_password(index: int) -> str:
     '''숫자 인덱스를 다시 문자열 암호로 변환합니다.'''
@@ -131,47 +128,48 @@ def setup_search_environment(config, manager):
     # 다중 프로세스 환경에서 안전하게 값을 공유하고 갱신하기 위해 Manager의 Value, Lock, List를 사용합니다.
     total_attempts_counter = manager.Value('Q', 0)
     counter_lock = manager.Lock()
-    worker_ranges = []
     
     if config.resume:
-        if os.path.exists(CHECKPOINT_FILE_PATH):
+        try:
+            with open(CHECKPOINT_FILE_PATH, 'r', encoding='utf-8') as raw_file:
+                checkpoint_data = json.load(raw_file)
+            config.reverse = checkpoint_data['reverse']
+            worker_count = checkpoint_data['cores']
+            total_attempts_counter.value = checkpoint_data['shared_count']
+            worker_ranges = checkpoint_data['tasks_info']
+            worker_positions = manager.list(checkpoint_data['positions'])
+            
             print('\n--- 체크포인트에서 이어하기를 시도합니다 ---')
-            try:
-                with open(CHECKPOINT_FILE_PATH, 'r', encoding='utf-8') as raw_file:
-                    checkpoint_data = json.load(raw_file)
-                config.reverse = checkpoint_data['reverse']
-                worker_count = checkpoint_data['cores']
-                total_attempts_counter.value = checkpoint_data['shared_count']
-                worker_ranges = checkpoint_data['tasks_info']
-                worker_positions = manager.list(checkpoint_data['positions'])
-                print(f'복구된 시도 횟수: {total_attempts_counter.value:,}회')
-                print(f'복구된 작업 코어 수: {worker_count}개\n')
-            except (OSError, json.JSONDecodeError, KeyError) as e:
-                print(f'[경고] 체크포인트 로드 실패 ({e}). 처음부터 다시 시작합니다.')
-                config.resume = False # 실패 시 resume 플래그를 꺼서 새로 시작하도록 강제
-        else:
+            print(f'복구된 시도 횟수: {total_attempts_counter.value:,}회')
+            print(f'복구된 작업 코어 수: {worker_count}개\n')
+            
+            # 성공적으로 로드했다면 즉시 반환하여 아래의 초기화 로직을 무시합니다. (Guard Clause 패턴)
+            return worker_count, total_attempts_counter, counter_lock, worker_positions, worker_ranges
+        except FileNotFoundError:
             print('\n[안내] 저장된 체크포인트가 없습니다. 처음부터 탐색을 시작합니다.')
-            config.resume = False
+        except (OSError, json.JSONDecodeError, KeyError) as e:
+            print(f'\n[경고] 체크포인트 로드 실패 ({e}). 처음부터 다시 시작합니다.')
 
-    # config.resume가 False이거나, resume 시도에 실패했을 경우 새로 환경을 구성합니다.
-    if not config.resume:
-        requested_workers = config.workers if config.workers else multiprocessing.cpu_count()
-        total_search_space = config.end_index - config.start_index
-        # 탐색 공간보다 작업자 수가 많아지지 않도록 조정하여 낭비를 막습니다.
-        worker_count = min(requested_workers, total_search_space)
-        print(f'할당된 작업 코어 수: {worker_count}개\n')
-        worker_positions = manager.list([0] * worker_count)
-        
-        # divmod를 사용하여 작업량을 최대한 균등하게 분배합니다.
-        base_chunk, remainder = divmod(total_search_space, worker_count)
-        cursor = config.start_index
-        for i in range(worker_count):
-            chunk_size = base_chunk + (1 if i < remainder else 0)
-            s = cursor
-            e = cursor + chunk_size
-            worker_ranges.append({'start': s, 'end': e})
-            worker_positions[i] = e - 1 if config.reverse else s
-            cursor = e
+    # 체크포인트가 없거나 오류가 발생해 처음부터 시작하는 경우의 초기화 로직
+    requested_workers = config.workers if config.workers else multiprocessing.cpu_count()
+    total_search_space = config.end_index - config.start_index
+    # 탐색 공간보다 작업자 수가 많아지지 않도록 조정하여 낭비를 막습니다.
+    worker_count = min(requested_workers, total_search_space)
+    print(f'할당된 작업 코어 수: {worker_count}개\n')
+    
+    worker_ranges = []
+    worker_positions = manager.list([0] * worker_count)
+    
+    # divmod를 사용하여 작업량을 최대한 균등하게 분배합니다.
+    base_chunk, remainder = divmod(total_search_space, worker_count)
+    cursor = config.start_index
+    for i in range(worker_count):
+        chunk_size = base_chunk + (1 if i < remainder else 0)
+        s = cursor
+        e = cursor + chunk_size
+        worker_ranges.append({'start': s, 'end': e})
+        worker_positions[i] = e - 1 if config.reverse else s
+        cursor = e
             
     return worker_count, total_attempts_counter, counter_lock, worker_positions, worker_ranges
 
@@ -212,8 +210,8 @@ def flush_local_attempts(local_attempts: int, total_attempts_counter: Any, count
     return 0
 
 def search_password_chunk(
-    worker_id: int, start_idx: int, end_idx: int, check_byte: int, 
-    encrypted_header: bytes, total_attempts_counter: Any, counter_lock: Any, reverse: bool, 
+    worker_id: int, step: int, end_condition: int, check_byte: int, 
+    encrypted_header: bytes, total_attempts_counter: Any, counter_lock: Any, 
     worker_positions: Any
 ):
     '''작업자: 암호를 검증하고 주기적으로 공유 변수에 진행 상황을 업데이트합니다.'''
@@ -224,10 +222,8 @@ def search_password_chunk(
             target_file_info = archive.infolist()[0]
             local_attempts = 0
             
-            # 탐색 방향(정방향/역방향)에 따른 증감값 및 종료 조건을 한 번만 정의하여 중복을 제거합니다.
+            # 전달받은 증감값과 종료 조건을 활용해 직관적인 반복문을 구성합니다.
             start_position = worker_positions[worker_id]
-            step = -1 if reverse else 1
-            end_condition = (start_idx - 1) if reverse else end_idx
             index_iterator = range(start_position, end_condition, step)
             
             generate_password = create_password_generator()
@@ -305,13 +301,9 @@ def unlock_zip(config):
     print(f'탐색 방향: {"역순 (Reverse)" if config.reverse else "정방향 (Forward)"}')
     print(f'할당 코어: {config.workers if config.workers else "자동 (전체 사용)"}')
     
-    if not os.path.exists(ZIP_FILE_PATH):
-        print(f'오류: {ZIP_FILE_PATH} 파일이 없습니다.')
-        return
-
     check_byte, encrypted_header = extract_zip_info()
     if check_byte is None:
-        print(f'오류: {ZIP_FILE_PATH} 파일이 손상되었거나 비어있습니다.')
+        print(f'오류: {ZIP_FILE_PATH} 파일을 읽을 수 없거나 손상되었습니다.')
         return
 
     # Manager 객체를 통해 여러 프로세스가 동시에 접근해도 안전한 공유 메모리 공간을 생성합니다.
@@ -319,9 +311,11 @@ def unlock_zip(config):
         worker_count, total_attempts_counter, counter_lock, worker_positions, worker_ranges = setup_search_environment(config, manager)
                 
         worker_args = []
+        step = -1 if config.reverse else 1
         for i in range(worker_count):
             worker_range = worker_ranges[i]
-            worker_args.append((i, worker_range['start'], worker_range['end'], check_byte, encrypted_header, total_attempts_counter, counter_lock, config.reverse, worker_positions))
+            end_condition = (worker_range['start'] - 1) if config.reverse else worker_range['end']
+            worker_args.append((i, step, end_condition, check_byte, encrypted_header, total_attempts_counter, counter_lock, worker_positions))
 
         # 작업자 프로세스를 관리할 Pool을 생성하고, 비동기 방식(apply_async)으로 각 코어에 작업을 분배합니다.
         with multiprocessing.Pool(processes=worker_count) as pool:
@@ -345,8 +339,9 @@ def unlock_zip(config):
                 # 정상 종료 시 결과 처리
                 if found_password or is_all_completed:
                     try:
-                        if os.path.exists(CHECKPOINT_FILE_PATH):
-                            os.remove(CHECKPOINT_FILE_PATH) # 완료 후엔 체크포인트 삭제
+                        os.remove(CHECKPOINT_FILE_PATH) # 완료 후엔 체크포인트 삭제
+                    except FileNotFoundError:
+                        pass # 삭제하려 했는데 이미 파일이 없다면 자연스럽게 무시
                     except OSError as e:
                         print(f'\n[경고] 체크포인트 파일 삭제 실패: {e}')
                 handle_search_result(found_password, total_attempts_counter.value, started_at)
