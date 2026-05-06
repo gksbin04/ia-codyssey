@@ -11,6 +11,7 @@ from pathlib import Path
 import string
 from dataclasses import dataclass
 from typing import Any
+import zlib
 
 # 실행 중인 스크립트 파일의 부모 디렉토리를 절대 경로로 구하여, 
 # 스크립트 실행 위치와 무관하게 항상 동일한 폴더에 파일이 저장되도록 보장합니다.
@@ -46,7 +47,9 @@ def format_elapsed_time(elapsed_seconds):
     return f'{hours:02d}:{minutes:02d}:{seconds:02d}'
 
 def password_to_index(password: str, charset: str, password_length: int) -> int:
-    '''지정된 규칙에 따라 문자열 암호를 숫자 인덱스로 변환합니다.'''
+    '''
+    문자열 암호를 n진법 숫자로 치환하여 고유 인덱스를 생성합니다.
+    '''
     if len(password) != password_length:
         raise ValueError(f'비밀번호 길이는 {password_length}자여야 합니다.')
     
@@ -111,7 +114,7 @@ def extract_zip_info(zip_path):
                 raw_file.seek(target_file_info.header_offset + zipfile.sizeFileHeader + filename_length + extra_field_length)
                 encrypted_header = raw_file.read(12)
         return check_byte, encrypted_header
-    except (zipfile.BadZipFile, OSError) as e:
+    except (zipfile.BadZipFile, OSError, struct.error) as e:
         print(f'[경고] ZIP 파일 읽기 오류: {e}')
         return None, None
 
@@ -126,8 +129,8 @@ def test_password(archive, target_file_info, candidate_password_bytes, encrypted
                 # 암호가 맞다면 정상적으로 압축이 풀려야 하므로 read()를 시도합니다. CRC32 검사까지 통과하면 True입니다.
                 zipped_file.read()
             return True
-        except Exception:
-            # 압축 해제 중 에러(zlib.error, BadZipFile 등)가 발생하면 우연히 헤더만 일치한 틀린 암호이므로 무시합니다.
+        except (RuntimeError, zipfile.BadZipFile, zlib.error):
+            # 압축 해제 중 에러가 발생하면 우연히 헤더만 일치한 틀린 암호이므로 무시합니다.
             pass
     return False
 
@@ -138,30 +141,45 @@ def setup_search_environment(config, manager):
     counter_lock = manager.Lock()
     worker_ranges = []
     
-    if config.resume and os.path.exists(config.checkpoint_path):
-        print('\n--- 체크포인트에서 이어하기를 시도합니다 ---')
-        with open(config.checkpoint_path, 'r', encoding='utf-8') as raw_file:
-            checkpoint_data = json.load(raw_file)
-        config.reverse = checkpoint_data['reverse']
-        worker_count = checkpoint_data['cores']
-        total_attempts_counter.value = checkpoint_data['shared_count']
-        worker_ranges = checkpoint_data['tasks_info']
-        worker_positions = manager.list(checkpoint_data['positions'])
-        print(f'복구된 시도 횟수: {total_attempts_counter.value:,}회')
-        print(f'복구된 작업 코어 수: {worker_count}개\n')
-    else:
-        # 전체 탐색 범위(숫자 인덱스 기준)를 작업 코어 수만큼 균등하게 N등분합니다.
-        worker_count = config.workers if config.workers else multiprocessing.cpu_count()
+    if config.resume:
+        if os.path.exists(config.checkpoint_path):
+            print('\n--- 체크포인트에서 이어하기를 시도합니다 ---')
+            try:
+                with open(config.checkpoint_path, 'r', encoding='utf-8') as raw_file:
+                    checkpoint_data = json.load(raw_file)
+                config.reverse = checkpoint_data['reverse']
+                worker_count = checkpoint_data['cores']
+                total_attempts_counter.value = checkpoint_data['shared_count']
+                worker_ranges = checkpoint_data['tasks_info']
+                worker_positions = manager.list(checkpoint_data['positions'])
+                print(f'복구된 시도 횟수: {total_attempts_counter.value:,}회')
+                print(f'복구된 작업 코어 수: {worker_count}개\n')
+            except (OSError, json.JSONDecodeError, KeyError) as e:
+                print(f'[경고] 체크포인트 로드 실패 ({e}). 처음부터 다시 시작합니다.')
+                config.resume = False # 실패 시 resume 플래그를 꺼서 새로 시작하도록 강제
+        else:
+            print('\n[안내] 저장된 체크포인트가 없습니다. 처음부터 탐색을 시작합니다.')
+            config.resume = False
+
+    # config.resume가 False이거나, resume 시도에 실패했을 경우 새로 환경을 구성합니다.
+    if not config.resume:
+        requested_workers = config.workers if config.workers else multiprocessing.cpu_count()
+        total_search_space = config.end_index - config.start_index
+        # 탐색 공간보다 작업자 수가 많아지지 않도록 조정하여 낭비를 막습니다.
+        worker_count = min(requested_workers, total_search_space)
         print(f'할당된 작업 코어 수: {worker_count}개\n')
         worker_positions = manager.list([0] * worker_count)
-        total_search_space = config.end_index - config.start_index
-        chunk_size = total_search_space // worker_count
+        
+        # divmod를 사용하여 작업량을 최대한 균등하게 분배합니다.
+        base_chunk, remainder = divmod(total_search_space, worker_count)
+        cursor = config.start_index
         for i in range(worker_count):
-            s = config.start_index + i * chunk_size
-            # 마지막 작업자는 나누어 떨어지지 않은 자투리 범위까지 모두 포함하도록 끝을 지정합니다.
-            e = s + chunk_size if i < worker_count - 1 else config.end_index
+            chunk_size = base_chunk + (1 if i < remainder else 0)
+            s = cursor
+            e = cursor + chunk_size
             worker_ranges.append({'start': s, 'end': e})
             worker_positions[i] = e - 1 if config.reverse else s
+            cursor = e
             
     return worker_count, total_attempts_counter, counter_lock, worker_positions, worker_ranges
 
@@ -196,8 +214,8 @@ def create_password_generator(length: int, base_val: int, charset: str):
 
 def search_password_chunk(
     worker_id: int, zip_path: str, start_idx: int, end_idx: int, check_byte: int, 
-    encrypted_header: bytes, total_attempts_counter, counter_lock, reverse: bool, 
-    worker_positions, charset: str, password_length: int, base: int
+    encrypted_header: bytes, total_attempts_counter: Any, counter_lock: Any, reverse: bool, 
+    worker_positions: Any, charset: str, password_length: int, base: int
 ):
     '''작업자: 암호를 검증하고 주기적으로 공유 변수에 진행 상황을 업데이트합니다.'''
     try:
@@ -229,37 +247,43 @@ def search_password_chunk(
                     with counter_lock:
                         total_attempts_counter.value += local_attempts
                     local_attempts = 0
-                    worker_positions[worker_id] = idx # 현재 위치 기록
+                    # 중복 탐색을 막기 위해 현재 위치의 '다음' 위치를 기록합니다.
+                    worker_positions[worker_id] = idx - 1 if reverse else idx + 1 
             
             # 남은 자투리 횟수 최종 업데이트
             if local_attempts > 0:
                 with counter_lock:
                     total_attempts_counter.value += local_attempts
+            
+            # [중요] 할당된 작업을 모두 마쳤을 경우, 재시작(Resume) 시 해당 구간을 건너뛰도록 위치를 끝으로 기록합니다.
+            worker_positions[worker_id] = (start_idx - 1) if reverse else end_idx
     except KeyboardInterrupt:
         pass
-    except Exception:
-        pass
+    except Exception as e:
+        print(f'\n[경고] 작업자 {worker_id}에서 예기치 않은 에러가 발생하여 탐색을 중단합니다: {e}')
     return None
 
 def monitor_workers(async_results, config, worker_count, total_attempts_counter, worker_positions, worker_ranges, started_at):
     '''Pool.apply_async로 비동기 실행된 작업자들의 결과를 주기적으로 폴링(Polling)하며 모니터링합니다.'''
     found_password = None
     last_checkpoint_saved_at = time.time()
-    is_all_completed = False
+    # get() 메서드를 여러 번 호출하는 오류를 막기 위해 각 작업의 처리 여부를 기록합니다.
+    processed_results = [False] * len(async_results)
     
     while True:
-        is_all_completed = True
-        for async_result in async_results:
-            # ready() 메서드를 통해 작업이 완료되었는지 블로킹(대기) 없이 확인합니다.
-            if async_result.ready():
-                cracked_password = async_result.get()
-                if cracked_password:
-                    found_password = cracked_password
-                    break
-            else:
-                is_all_completed = False
+        all_tasks_processed = True
+        for i, res in enumerate(async_results):
+            if not processed_results[i]: # 아직 처리되지 않은 결과만 확인
+                if res.ready():
+                    result = res.get() # get()은 여기서 단 한번만 호출됩니다.
+                    processed_results[i] = True
+                    if result:
+                        found_password = result
+                        break # 암호를 찾았으면 루프 즉시 탈출
+                else:
+                    all_tasks_processed = False # 아직 실행 중인 작업이 있음
         
-        if found_password or is_all_completed:
+        if found_password or all_tasks_processed:
             break
         
         # 일정 주기(5초)마다 메인 프로세스가 모든 작업자의 진행 상황을 취합하여 체크포인트 파일에 저장합니다.
@@ -274,7 +298,7 @@ def monitor_workers(async_results, config, worker_count, total_attempts_counter,
         print(f'\r[해독 중] 시도: {current_total:,}회 | 진행 시간: {format_elapsed_time(elapsed)}', end='', flush=True)
         time.sleep(0.5)
         
-    return found_password, is_all_completed
+    return found_password, all(processed_results)
 
 def unlock_zip(config):
     '''비상 창고의 암호를 해독하기 위한 메인 오케스트레이션 함수입니다.'''
@@ -379,4 +403,6 @@ def main():
         print(f'입력 범위 오류: {e}')
 
 if __name__ == '__main__':
+    # Windows 환경에서 멀티프로세싱을 안정적으로 실행하기 위해 freeze_support()를 호출합니다.
+    multiprocessing.freeze_support()
     main()

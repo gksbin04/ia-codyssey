@@ -1,4 +1,0 @@
-{
-    "charset": "0123456789abcdefghijklmnopqrstuvwxyz",
-    "password_length": 6
-}
