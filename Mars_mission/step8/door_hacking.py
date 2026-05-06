@@ -28,12 +28,6 @@ BASE = len(CHARSET) # 36진법(숫자 10개 + 알파벳 26개) 변환을 위한 
 @dataclass
 class SearchConfig:
     '''탐색 설정 데이터를 담아두는 클래스입니다.'''
-    zip_path: str
-    password_path: str
-    checkpoint_path: str
-    charset: str
-    password_length: int
-    base: int
     reverse: bool
     resume: bool
     workers: int | None
@@ -46,41 +40,39 @@ def format_elapsed_time(elapsed_seconds):
     hours, minutes = divmod(minutes, 60)
     return f'{hours:02d}:{minutes:02d}:{seconds:02d}'
 
-def password_to_index(password: str, charset: str, password_length: int) -> int:
+def password_to_index(password: str) -> int:
     '''
     문자열 암호를 n진법 숫자로 치환하여 고유 인덱스를 생성합니다.
     '''
-    if len(password) != password_length:
-        raise ValueError(f'비밀번호 길이는 {password_length}자여야 합니다.')
+    if len(password) != PASSWORD_LENGTH:
+        raise ValueError(f'비밀번호 길이는 {PASSWORD_LENGTH}자여야 합니다.')
     
     value = 0
-    base = len(charset)
     for char in password:
-        if char not in charset:
+        if char not in CHARSET:
             raise ValueError(f"'{char}'는 유효한 문자가 아닙니다.")
-        value = (value * base) + charset.index(char)
+        value = (value * BASE) + CHARSET.index(char)
     return value
 
-def index_to_password(index: int, charset: str, password_length: int) -> str:
+def index_to_password(index: int) -> str:
     '''숫자 인덱스를 다시 문자열 암호로 변환합니다.'''
     chars = []
-    base = len(charset)
     temp = index
-    for _ in range(password_length):
-        temp, remainder = divmod(temp, base)
-        chars.append(charset[remainder])
+    for _ in range(PASSWORD_LENGTH):
+        temp, remainder = divmod(temp, BASE)
+        chars.append(CHARSET[remainder])
     return ''.join(reversed(chars))
 
-def save_checkpoint(config, worker_count, total_attempts_counter, positions, worker_ranges):
+def save_checkpoint(reverse, total_attempts, positions, worker_ranges):
     '''진행 상황을 임시 파일을 거쳐 원자적으로 안전하게 저장합니다.'''
     checkpoint_data = {
-        'reverse': config.reverse,
-        'cores': worker_count,
-        'shared_count': total_attempts_counter.value,
+        'reverse': reverse,
+        'cores': len(worker_ranges),
+        'shared_count': total_attempts,
         'positions': list(positions),
         'tasks_info': worker_ranges
     }
-    tmp_file = config.checkpoint_path + '.tmp'
+    tmp_file = CHECKPOINT_FILE_PATH + '.tmp'
     # 원자적 쓰기(Atomic Write) 패턴: 쓰기 도중 프로그램이 종료되어도 파일이 손상되지 않도록 임시 파일에 먼저 씁니다.
     try:
         with open(tmp_file, 'w', encoding='utf-8') as raw_file:
@@ -88,14 +80,14 @@ def save_checkpoint(config, worker_count, total_attempts_counter, positions, wor
             raw_file.flush()
             # OS 캐시를 무시하고 디스크에 즉시 기록하도록 강제합니다.
             os.fsync(raw_file.fileno()) 
-        os.replace(tmp_file, config.checkpoint_path) # 쓰기가 완료되면 원본 파일과 교체합니다.
+        os.replace(tmp_file, CHECKPOINT_FILE_PATH) # 쓰기가 완료되면 원본 파일과 교체합니다.
     except OSError as e:
         print(f'[경고] 체크포인트 저장 중 오류 발생: {e}')
 
-def extract_zip_info(zip_path):
+def extract_zip_info():
     '''ZIP 파일의 유효성을 검증하고 암호화 헤더와 체크 바이트를 추출합니다.'''
     try:
-        with zipfile.ZipFile(zip_path) as archive:
+        with zipfile.ZipFile(ZIP_FILE_PATH) as archive:
             if not archive.infolist():
                 return None, None
             target_file_info = archive.infolist()[0]
@@ -103,7 +95,7 @@ def extract_zip_info(zip_path):
             # 복호화 검증에 사용할 기준 바이트(check_byte)가 파일 수정 시간의 일부인지, CRC32의 일부인지 결정됩니다.
             check_byte = (target_file_info._raw_time >> 8) & 0xFF if target_file_info.flag_bits & 0x08 else (target_file_info.CRC >> 24) & 0xFF
             
-            with open(zip_path, 'rb') as raw_file:
+            with open(ZIP_FILE_PATH, 'rb') as raw_file:
                 # 로컬 파일 헤더의 오프셋으로 이동하여 헤더 구조체의 길이를 파악합니다.
                 raw_file.seek(target_file_info.header_offset)
                 file_header = raw_file.read(zipfile.sizeFileHeader)
@@ -142,10 +134,10 @@ def setup_search_environment(config, manager):
     worker_ranges = []
     
     if config.resume:
-        if os.path.exists(config.checkpoint_path):
+        if os.path.exists(CHECKPOINT_FILE_PATH):
             print('\n--- 체크포인트에서 이어하기를 시도합니다 ---')
             try:
-                with open(config.checkpoint_path, 'r', encoding='utf-8') as raw_file:
+                with open(CHECKPOINT_FILE_PATH, 'r', encoding='utf-8') as raw_file:
                     checkpoint_data = json.load(raw_file)
                 config.reverse = checkpoint_data['reverse']
                 worker_count = checkpoint_data['cores']
@@ -183,87 +175,88 @@ def setup_search_environment(config, manager):
             
     return worker_count, total_attempts_counter, counter_lock, worker_positions, worker_ranges
 
-def handle_search_result(found_password, total_attempts_counter, started_at, config):
+def handle_search_result(found_password, total_attempts, started_at):
     '''해독 결과를 화면에 출력하고 파일로 저장합니다.'''
     elapsed_time = time.time() - started_at
     if found_password:
         print(f'\n\n비밀번호를 찾았습니다!: {found_password}')
-        print(f'최종 반복 회수: {total_attempts_counter.value:,}회')
-        print(f'총 진행 시간: {format_elapsed_time(elapsed_time)}')
+        print(f'최종 반복 회수: {total_attempts:,}회')
         
         try:
-            with open(config.password_path, 'w', encoding='utf-8') as raw_file:
+            with open(PASSWORD_FILE_PATH, 'w', encoding='utf-8') as raw_file:
                 raw_file.write(found_password)
         except OSError as e:
             print(f'[오류] 비밀번호 저장 실패: {e}')
     else:
         print('\n\n암호 해독 실패.')
-        print(f'총 진행 시간: {format_elapsed_time(elapsed_time)}')
+        
+    print(f'총 진행 시간: {format_elapsed_time(elapsed_time)}')
 
-def create_password_generator(length: int, base_val: int, charset: str):
+def create_password_generator():
     '''특정 인덱스를 받아 즉시 바이트(bytes) 비밀번호로 변환해 주는 최적화된 함수(클로저)를 반환합니다.'''
     # 매번 제곱 연산을 하지 않도록 자리수별 가중치(powers)를 미리 계산해 메모리에 올려둡니다.
-    powers = [base_val ** i for i in range(length - 1, -1, -1)]
-    charset_bytes = charset.encode('utf-8')
+    powers = [BASE ** i for i in range(PASSWORD_LENGTH - 1, -1, -1)]
+    charset_bytes = CHARSET.encode('utf-8')
     
     # 파이썬의 동적 바인딩을 이용해 외부 변수(powers, charset_bytes)를 참조하는 내부 함수를 반환합니다.
     def generator(idx: int) -> bytes:
-        return bytes([charset_bytes[(idx // p) % base_val] for p in powers])
+        return bytes([charset_bytes[(idx // p) % BASE] for p in powers])
         
     return generator
 
+def flush_local_attempts(local_attempts: int, total_attempts_counter: Any, counter_lock: Any) -> int:
+    '''로컬에 누적된 시도 횟수를 공유 카운터에 안전하게 반영하고 0으로 초기화하여 반환합니다.'''
+    if local_attempts > 0:
+        with counter_lock:
+            total_attempts_counter.value += local_attempts
+    return 0
+
 def search_password_chunk(
-    worker_id: int, zip_path: str, start_idx: int, end_idx: int, check_byte: int, 
+    worker_id: int, start_idx: int, end_idx: int, check_byte: int, 
     encrypted_header: bytes, total_attempts_counter: Any, counter_lock: Any, reverse: bool, 
-    worker_positions: Any, charset: str, password_length: int, base: int
+    worker_positions: Any
 ):
     '''작업자: 암호를 검증하고 주기적으로 공유 변수에 진행 상황을 업데이트합니다.'''
     try:
-        with zipfile.ZipFile(zip_path, 'r') as archive:
+        with zipfile.ZipFile(ZIP_FILE_PATH, 'r') as archive:
             if not archive.infolist():
                 return None
             target_file_info = archive.infolist()[0]
             local_attempts = 0
             
-            # 할당받은 작업 구간(start_position ~ 끝) 내에서 순차적 또는 역순으로 탐색을 진행합니다.
+            # 탐색 방향(정방향/역방향)에 따른 증감값 및 종료 조건을 한 번만 정의하여 중복을 제거합니다.
             start_position = worker_positions[worker_id]
-            index_iterator = range(start_position, start_idx - 1, -1) if reverse else range(start_position, end_idx)
+            step = -1 if reverse else 1
+            end_condition = (start_idx - 1) if reverse else end_idx
+            index_iterator = range(start_position, end_condition, step)
             
-            generate_password = create_password_generator(password_length, base, charset)
+            generate_password = create_password_generator()
             
             for idx in index_iterator:
-                # 성능 저하를 막기 위해 매번 lock을 걸지 않고 프로세스 내부의 로컬 변수에 먼저 누적합니다.
                 local_attempts += 1
                 
                 candidate_password_bytes = generate_password(idx)
                 
                 if test_password(archive, target_file_info, candidate_password_bytes, encrypted_header, check_byte):
-                    with counter_lock:
-                        total_attempts_counter.value += local_attempts
+                    local_attempts = flush_local_attempts(local_attempts, total_attempts_counter, counter_lock)
                     return candidate_password_bytes.decode('utf-8') # 찾은 후 문자열로 복원하여 반환
                 
-                # 10만 번 시도마다 로컬에 쌓인 횟수를 메인 프로세스의 공유 카운터에 반영하고 현재 위치를 기록합니다.
                 if local_attempts >= 100000:
-                    with counter_lock:
-                        total_attempts_counter.value += local_attempts
-                    local_attempts = 0
+                    local_attempts = flush_local_attempts(local_attempts, total_attempts_counter, counter_lock)
                     # 중복 탐색을 막기 위해 현재 위치의 '다음' 위치를 기록합니다.
-                    worker_positions[worker_id] = idx - 1 if reverse else idx + 1 
+                    worker_positions[worker_id] = idx + step 
             
-            # 남은 자투리 횟수 최종 업데이트
-            if local_attempts > 0:
-                with counter_lock:
-                    total_attempts_counter.value += local_attempts
+            local_attempts = flush_local_attempts(local_attempts, total_attempts_counter, counter_lock)
             
             # [중요] 할당된 작업을 모두 마쳤을 경우, 재시작(Resume) 시 해당 구간을 건너뛰도록 위치를 끝으로 기록합니다.
-            worker_positions[worker_id] = (start_idx - 1) if reverse else end_idx
+            worker_positions[worker_id] = end_condition
     except KeyboardInterrupt:
         pass
     except Exception as e:
         print(f'\n[경고] 작업자 {worker_id}에서 예기치 않은 에러가 발생하여 탐색을 중단합니다: {e}')
     return None
 
-def monitor_workers(async_results, config, worker_count, total_attempts_counter, worker_positions, worker_ranges, started_at):
+def monitor_workers(async_results, reverse, total_attempts_counter, worker_positions, worker_ranges, started_at):
     '''Pool.apply_async로 비동기 실행된 작업자들의 결과를 주기적으로 폴링(Polling)하며 모니터링합니다.'''
     found_password = None
     last_checkpoint_saved_at = time.time()
@@ -289,7 +282,7 @@ def monitor_workers(async_results, config, worker_count, total_attempts_counter,
         # 일정 주기(5초)마다 메인 프로세스가 모든 작업자의 진행 상황을 취합하여 체크포인트 파일에 저장합니다.
         now = time.time()
         if now - last_checkpoint_saved_at > 5.0:
-            save_checkpoint(config, worker_count, total_attempts_counter, worker_positions, worker_ranges)
+            save_checkpoint(reverse, total_attempts_counter.value, worker_positions, worker_ranges)
             last_checkpoint_saved_at = now
         
         # 실시간 생존 신고 출력
@@ -306,19 +299,19 @@ def unlock_zip(config):
     
     print('--- 화성 기지 비상 창고 암호 해독 시작 ---')
     print(f'시작 시간: {time.ctime(started_at)}')
-    start_str = index_to_password(config.start_index, config.charset, config.password_length)
-    end_str = index_to_password(config.end_index - 1, config.charset, config.password_length)
+    start_str = index_to_password(config.start_index)
+    end_str = index_to_password(config.end_index - 1)
     print(f'탐색 범위: {start_str} ~ {end_str}')
     print(f'탐색 방향: {"역순 (Reverse)" if config.reverse else "정방향 (Forward)"}')
     print(f'할당 코어: {config.workers if config.workers else "자동 (전체 사용)"}')
     
-    if not os.path.exists(config.zip_path):
-        print(f'오류: {config.zip_path} 파일이 없습니다.')
+    if not os.path.exists(ZIP_FILE_PATH):
+        print(f'오류: {ZIP_FILE_PATH} 파일이 없습니다.')
         return
 
-    check_byte, encrypted_header = extract_zip_info(config.zip_path)
+    check_byte, encrypted_header = extract_zip_info()
     if check_byte is None:
-        print(f'오류: {config.zip_path} 파일이 손상되었거나 비어있습니다.')
+        print(f'오류: {ZIP_FILE_PATH} 파일이 손상되었거나 비어있습니다.')
         return
 
     # Manager 객체를 통해 여러 프로세스가 동시에 접근해도 안전한 공유 메모리 공간을 생성합니다.
@@ -328,7 +321,7 @@ def unlock_zip(config):
         worker_args = []
         for i in range(worker_count):
             worker_range = worker_ranges[i]
-            worker_args.append((i, config.zip_path, worker_range['start'], worker_range['end'], check_byte, encrypted_header, total_attempts_counter, counter_lock, config.reverse, worker_positions, config.charset, config.password_length, config.base))
+            worker_args.append((i, worker_range['start'], worker_range['end'], check_byte, encrypted_header, total_attempts_counter, counter_lock, config.reverse, worker_positions))
 
         # 작업자 프로세스를 관리할 Pool을 생성하고, 비동기 방식(apply_async)으로 각 코어에 작업을 분배합니다.
         with multiprocessing.Pool(processes=worker_count) as pool:
@@ -336,13 +329,13 @@ def unlock_zip(config):
             
             try:
                 found_password, is_all_completed = monitor_workers(
-                    async_results, config, worker_count, total_attempts_counter, 
+                    async_results, config.reverse, total_attempts_counter, 
                     worker_positions, worker_ranges, started_at
                 )
             except KeyboardInterrupt:
                 print('\n\n[경고] 사용자에 의해 해독이 중단되었습니다. 진행 상황을 저장합니다...')
                 try:
-                    save_checkpoint(config, worker_count, total_attempts_counter, worker_positions, worker_ranges)
+                    save_checkpoint(config.reverse, total_attempts_counter.value, worker_positions, worker_ranges)
                     print('저장 완료! 다음 실행 시 `--resume` 옵션을 주면 이어서 실행됩니다.')
                 except Exception as e:
                     print(f'체크포인트 저장 중 오류 발생: {e}')
@@ -352,11 +345,11 @@ def unlock_zip(config):
                 # 정상 종료 시 결과 처리
                 if found_password or is_all_completed:
                     try:
-                        if os.path.exists(config.checkpoint_path):
-                            os.remove(config.checkpoint_path) # 완료 후엔 체크포인트 삭제
+                        if os.path.exists(CHECKPOINT_FILE_PATH):
+                            os.remove(CHECKPOINT_FILE_PATH) # 완료 후엔 체크포인트 삭제
                     except OSError as e:
                         print(f'\n[경고] 체크포인트 파일 삭제 실패: {e}')
-                handle_search_result(found_password, total_attempts_counter, started_at, config)
+                handle_search_result(found_password, total_attempts_counter.value, started_at)
             finally:
                 pool.terminate() # 어떤 상황이든 마지막엔 남은 작업자 프로세스 강제 종료 및 자원 반환
                 pool.join()
@@ -375,19 +368,13 @@ def parse_args() -> SearchConfig:
     end_idx = BASE ** PASSWORD_LENGTH
     
     if parsed_args.start:
-        start_idx = password_to_index(parsed_args.start, CHARSET, PASSWORD_LENGTH)
+        start_idx = password_to_index(parsed_args.start)
     if parsed_args.end:
-        end_idx = password_to_index(parsed_args.end, CHARSET, PASSWORD_LENGTH)
+        end_idx = password_to_index(parsed_args.end)
     if start_idx >= end_idx:
         raise ValueError('시작 범위가 종료 범위보다 크거나 같습니다.')
         
     return SearchConfig(
-        zip_path=ZIP_FILE_PATH,
-        password_path=PASSWORD_FILE_PATH,
-        checkpoint_path=CHECKPOINT_FILE_PATH,
-        charset=CHARSET,
-        password_length=PASSWORD_LENGTH,
-        base=BASE,
         reverse=parsed_args.reverse,
         resume=parsed_args.resume,
         workers=parsed_args.workers,
