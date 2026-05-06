@@ -18,20 +18,59 @@ BASE_DIR = Path(__file__).resolve().parent
 ZIP_FILE_PATH = str(BASE_DIR / 'emergency_storage_key.zip')
 PASSWORD_FILE_PATH = str(BASE_DIR / 'password.txt')
 CHECKPOINT_FILE_PATH = str(BASE_DIR / 'checkpoint.json')
-
 # 무차별 대입에 사용할 문자셋(숫자 0~9, 영소문자 a~z)과 비밀번호의 길이를 정의합니다.
 CHARSET = string.digits + string.ascii_lowercase
 PASSWORD_LENGTH = 6
 BASE = len(CHARSET) # 36진법(숫자 10개 + 알파벳 26개) 계산을 위한 진법의 밑(Base) 값입니다.
 
+# ── 1. 데이터 모델 및 CLI 설정 ──
+
 @dataclass
 class SearchConfig:
-    '''탐색 설정 데이터를 담아두는 데이터 클래스(Data Class)입니다.'''
+    '''탐색 설정 데이터를 담아두는 데이터 클래스(Data Class)입니다.
+    reverse: 역순 탐색 여부, resume: 이어하기 여부, workers: 사용할 CPU 코어 수
+    start_index: 탐색 시작 인덱스, end_index: 탐색 종료 인덱스'''
     reverse: bool
     resume: bool
     workers: int | None
     start_index: int
     end_index: int
+
+def parse_args() -> SearchConfig:
+    '''
+    명령행 인자(Command Line Arguments)를 파싱하여 설정 객체를 반환합니다.
+    
+    Returns:
+        SearchConfig: 파싱이 완료된 탐색 설정 정보 객체
+    '''
+    parser = argparse.ArgumentParser(description='화성 기지 비상 창고 암호 해독기')
+    parser.add_argument('--reverse', action='store_true', help='뒷 번호부터 역순으로 암호를 탐색합니다.')
+    parser.add_argument('--resume', action='store_true', help='이전 작업 지점부터 이어서 해독을 시작합니다.')
+    parser.add_argument('--workers', type=int, default=None, help='사용할 CPU 코어 수를 임의로 지정합니다.')
+    parser.add_argument('--start', type=str, default=None, help='탐색을 시작할 6자리 문자열 암호 (예: 000000)')
+    parser.add_argument('--end', type=str, default=None, help='탐색을 종료할 6자리 문자열 암호 (예: zzzzzz)')
+    parsed_args = parser.parse_args()
+    
+    start_idx = 0
+    end_idx = BASE ** PASSWORD_LENGTH
+    
+    if parsed_args.start:
+        start_idx = password_to_index(parsed_args.start)
+    if parsed_args.end:
+        # 사용자가 지정한 종료 암호까지 온전히 탐색(Inclusive)할 수 있도록 범위 끝(end_idx)에 1을 더해줍니다.
+        end_idx = password_to_index(parsed_args.end) + 1
+    if start_idx >= end_idx:
+        raise ValueError('시작 범위가 종료 범위보다 크거나 같습니다.')
+        
+    return SearchConfig(
+        reverse=parsed_args.reverse,
+        resume=parsed_args.resume,
+        workers=parsed_args.workers,
+        start_index=start_idx,
+        end_index=end_idx
+    )
+
+# ── 2. 유틸리티 및 암호 연산 (Utils & Math) ──
 
 def format_elapsed_time(elapsed_seconds: float) -> str:
     '''
@@ -83,6 +122,25 @@ def index_to_password(index: int) -> str:
         temp, remainder = divmod(temp, BASE)
         chars.append(CHARSET[remainder])
     return ''.join(reversed(chars))
+
+def create_password_generator():
+    '''
+    특정 인덱스를 받아 즉시 바이트(bytes) 암호로 변환해 주는 최적화된 함수(클로저)를 반환합니다.
+    
+    Returns:
+        function: 인덱스(int)를 인자로 받아 bytes 암호를 반환하는 발전기(Generator) 함수
+    '''
+    # N진법 변환 시 매번 거듭제곱 연산을 하면 느리므로, 각 자리의 가중치(Base^N)를 리스트로 미리 계산해 둡니다.
+    powers = [BASE ** i for i in range(PASSWORD_LENGTH - 1, -1, -1)]
+    charset_bytes = CHARSET.encode('utf-8')
+    
+    # 외부 변수(powers, charset_bytes)를 기억하는 클로저(Closure) 함수를 반환하여, 호출될 때마다 빠르고 독립적으로 연산하게 합니다.
+    def generator(idx: int) -> bytes:
+        return bytes([charset_bytes[(idx // p) % BASE] for p in powers])
+        
+    return generator
+
+# ── 3. 파일 I/O 및 ZIP 처리 (File & Zip) ──
 
 def save_checkpoint(reverse, total_attempts, positions, worker_ranges):
     '''
@@ -173,6 +231,74 @@ def test_password(archive, target_file_info, candidate_password_bytes, encrypted
             pass
     return False
 
+# ── 4. 백그라운드 워커 (Multiprocessing Worker) ──
+
+def flush_local_attempts(local_attempts: int, total_attempts_counter: Any, counter_lock: Any) -> int:
+    '''
+    로컬에 누적된 시도 횟수를 공유 카운터에 안전하게 반영하고 0으로 초기화하여 반환합니다.
+    
+    Args:
+        local_attempts (int): 현재 워커에 누적된 시도 횟수
+        total_attempts_counter (Value): 멀티프로세싱 공유 메모리 카운터 객체
+        counter_lock (Lock): 카운터 동기화 락 객체
+        
+    Returns:
+        int: 초기화된 횟수 (항상 0 반환)
+    '''
+    if local_attempts > 0:
+        with counter_lock:
+            total_attempts_counter.value += local_attempts
+    return 0
+
+def search_password_chunk(
+    worker_id: int, step: int, end_condition: int, check_byte: int, 
+    encrypted_header: bytes, total_attempts_counter: Any, counter_lock: Any, 
+    worker_positions: Any
+):
+    '''
+    [백그라운드 워커] 주어진 구간 안에서 암호를 반복 검증하고 주기적으로 공유 변수에 
+    진행 상황(시도 횟수, 현재 위치)을 업데이트합니다.
+    '''
+    try:
+        with zipfile.ZipFile(ZIP_FILE_PATH, 'r') as archive:
+            if not archive.infolist():
+                return None
+            target_file_info = archive.infolist()[0]
+            local_attempts = 0
+            
+            # 메인 프로세스에서 계산해 준 시작, 종료, 증감(step) 값을 바탕으로 반복문(range)을 생성합니다.
+            start_position = worker_positions[worker_id]
+            index_iterator = range(start_position, end_condition, step)
+            
+            # 인덱스 번호를 받아 바로 암호 바이트열로 변환해 주는 최적화된 함수(클로저)를 생성하여, 반복문 안에서 빠르게 암호 후보를 만들어 냅니다.
+            generate_password = create_password_generator()
+            
+            for idx in index_iterator:
+                local_attempts += 1
+                
+                candidate_password_bytes = generate_password(idx)
+                
+                if test_password(archive, target_file_info, candidate_password_bytes, encrypted_header, check_byte):
+                    local_attempts = flush_local_attempts(local_attempts, total_attempts_counter, counter_lock)
+                    return candidate_password_bytes.decode('utf-8') # 정답 바이트열을 문자열(str)로 복원하여 반환합니다.
+                
+                if local_attempts >= 100000:
+                    local_attempts = flush_local_attempts(local_attempts, total_attempts_counter, counter_lock)
+                    # 탐색이 중단되었다 재시작될 때 이미 검사한 곳을 또 검사하지 않도록 다음 위치(idx + step)를 기록해 둡니다.
+                    worker_positions[worker_id] = idx + step 
+            
+            local_attempts = flush_local_attempts(local_attempts, total_attempts_counter, counter_lock)
+            
+            # [중요] 해당 코어가 할당받은 구역의 탐색을 모두 마쳤다면, 나중에 이어하기 시 이 구역을 아예 건너뛰도록 종료 위치로 덮어씁니다.
+            worker_positions[worker_id] = end_condition
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        print(f'\n[경고] 작업자 {worker_id}에서 예기치 않은 에러가 발생하여 탐색을 중단합니다: {e}')
+    return None
+
+# ── 5. 메인 오케스트레이터 (Orchestrator) ──
+
 def setup_search_environment(config):
     '''
     체크포인트를 로드하거나, 없을 경우 새롭게 작업자별 탐색 범위를 분할합니다.
@@ -228,110 +354,6 @@ def setup_search_environment(config):
             
     return worker_count, restored_attempts, positions, worker_ranges, is_reverse
 
-def handle_search_result(found_password, total_attempts, started_at):
-    '''
-    해독 결과를 화면에 출력하고 파일로 저장합니다.
-    
-    Args:
-        found_password (str | None): 찾은 비밀번호 문자열 (실패 시 None)
-        total_attempts (int): 탐색에 소요된 최종 시도 횟수
-        started_at (float): 스크립트 실행이 시작된 시간 (time.time())
-    '''
-    elapsed_time = time.time() - started_at
-    if found_password:
-        print(f'\n\n비밀번호를 찾았습니다!: {found_password}')
-        print(f'최종 반복 회수: {total_attempts:,}회')
-        
-        try:
-            with open(PASSWORD_FILE_PATH, 'w', encoding='utf-8') as raw_file:
-                raw_file.write(found_password)
-        except OSError as e:
-            print(f'[오류] 비밀번호 저장 실패: {e}')
-    else:
-        print('\n\n암호 해독 실패.')
-        
-    print(f'총 진행 시간: {format_elapsed_time(elapsed_time)}')
-
-def create_password_generator():
-    '''
-    특정 인덱스를 받아 즉시 바이트(bytes) 암호로 변환해 주는 최적화된 함수(클로저)를 반환합니다.
-    
-    Returns:
-        function: 인덱스(int)를 인자로 받아 bytes 암호를 반환하는 발전기(Generator) 함수
-    '''
-    # N진법 변환 시 매번 거듭제곱 연산을 하면 느리므로, 각 자리의 가중치(Base^N)를 리스트로 미리 계산해 둡니다.
-    powers = [BASE ** i for i in range(PASSWORD_LENGTH - 1, -1, -1)]
-    charset_bytes = CHARSET.encode('utf-8')
-    
-    # 외부 변수(powers, charset_bytes)를 기억하는 클로저(Closure) 함수를 반환하여, 호출될 때마다 빠르고 독립적으로 연산하게 합니다.
-    def generator(idx: int) -> bytes:
-        return bytes([charset_bytes[(idx // p) % BASE] for p in powers])
-        
-    return generator
-
-def flush_local_attempts(local_attempts: int, total_attempts_counter: Any, counter_lock: Any) -> int:
-    '''
-    로컬에 누적된 시도 횟수를 공유 카운터에 안전하게 반영하고 0으로 초기화하여 반환합니다.
-    
-    Args:
-        local_attempts (int): 현재 워커에 누적된 시도 횟수
-        total_attempts_counter (Value): 멀티프로세싱 공유 메모리 카운터 객체
-        counter_lock (Lock): 카운터 동기화 락 객체
-        
-    Returns:
-        int: 초기화된 횟수 (항상 0 반환)
-    '''
-    if local_attempts > 0:
-        with counter_lock:
-            total_attempts_counter.value += local_attempts
-    return 0
-
-def search_password_chunk(
-    worker_id: int, step: int, end_condition: int, check_byte: int, 
-    encrypted_header: bytes, total_attempts_counter: Any, counter_lock: Any, 
-    worker_positions: Any
-):
-    '''
-    [백그라운드 워커] 주어진 구간 안에서 암호를 반복 검증하고 주기적으로 공유 변수에 
-    진행 상황(시도 횟수, 현재 위치)을 업데이트합니다.
-    '''
-    try:
-        with zipfile.ZipFile(ZIP_FILE_PATH, 'r') as archive:
-            if not archive.infolist():
-                return None
-            target_file_info = archive.infolist()[0]
-            local_attempts = 0
-            
-            # 메인 프로세스에서 계산해 준 시작, 종료, 증감(step) 값을 바탕으로 반복문(range)을 생성합니다.
-            start_position = worker_positions[worker_id]
-            index_iterator = range(start_position, end_condition, step)
-            
-            generate_password = create_password_generator()
-            
-            for idx in index_iterator:
-                local_attempts += 1
-                
-                candidate_password_bytes = generate_password(idx)
-                
-                if test_password(archive, target_file_info, candidate_password_bytes, encrypted_header, check_byte):
-                    local_attempts = flush_local_attempts(local_attempts, total_attempts_counter, counter_lock)
-                    return candidate_password_bytes.decode('utf-8') # 정답 바이트열을 문자열(str)로 복원하여 반환합니다.
-                
-                if local_attempts >= 100000:
-                    local_attempts = flush_local_attempts(local_attempts, total_attempts_counter, counter_lock)
-                    # 탐색이 중단되었다 재시작될 때 이미 검사한 곳을 또 검사하지 않도록 다음 위치(idx + step)를 기록해 둡니다.
-                    worker_positions[worker_id] = idx + step 
-            
-            local_attempts = flush_local_attempts(local_attempts, total_attempts_counter, counter_lock)
-            
-            # [중요] 해당 코어가 할당받은 구역의 탐색을 모두 마쳤다면, 나중에 이어하기 시 이 구역을 아예 건너뛰도록 종료 위치로 덮어씁니다.
-            worker_positions[worker_id] = end_condition
-    except KeyboardInterrupt:
-        pass
-    except Exception as e:
-        print(f'\n[경고] 작업자 {worker_id}에서 예기치 않은 에러가 발생하여 탐색을 중단합니다: {e}')
-    return None
-
 def monitor_workers(async_results, reverse, total_attempts_counter, worker_positions, worker_ranges, started_at):
     '''
     [메인 프로세스] Pool.apply_async로 비동기 실행된 작업자들의 결과를 주기적으로 
@@ -374,6 +396,30 @@ def monitor_workers(async_results, reverse, total_attempts_counter, worker_posit
         
     # 모니터링이 끝나는 시점의 최종 횟수까지 같이 반환하여, 밖에서 Manager 객체를 또 조회하지 않도록 최적화합니다.
     return found_password, all(processed_results), total_attempts_counter.value
+
+def handle_search_result(found_password, total_attempts, started_at):
+    '''
+    해독 결과를 화면에 출력하고 파일로 저장합니다.
+    
+    Args:
+        found_password (str | None): 찾은 비밀번호 문자열 (실패 시 None)
+        total_attempts (int): 탐색에 소요된 최종 시도 횟수
+        started_at (float): 스크립트 실행이 시작된 시간 (time.time())
+    '''
+    elapsed_time = time.time() - started_at
+    if found_password:
+        print(f'\n\n비밀번호를 찾았습니다!: {found_password}')
+        print(f'최종 반복 회수: {total_attempts:,}회')
+        
+        try:
+            with open(PASSWORD_FILE_PATH, 'w', encoding='utf-8') as raw_file:
+                raw_file.write(found_password)
+        except OSError as e:
+            print(f'[오류] 비밀번호 저장 실패: {e}')
+    else:
+        print('\n\n암호 해독 실패.')
+        
+    print(f'총 진행 시간: {format_elapsed_time(elapsed_time)}')
 
 def unlock_zip(config):
     '''
@@ -448,39 +494,7 @@ def unlock_zip(config):
                 pool.terminate() # 예외가 나든 완료되든, 마지막에는 반드시 남은 작업자 프로세스들을 강제 종료하고 메모리 자원을 OS에 반환합니다.
                 pool.join()
 
-def parse_args() -> SearchConfig:
-    '''
-    명령행 인자(Command Line Arguments)를 파싱하여 설정 객체를 반환합니다.
-    
-    Returns:
-        SearchConfig: 파싱이 완료된 탐색 설정 정보 객체
-    '''
-    parser = argparse.ArgumentParser(description='화성 기지 비상 창고 암호 해독기')
-    parser.add_argument('--reverse', action='store_true', help='뒷 번호부터 역순으로 암호를 탐색합니다.')
-    parser.add_argument('--resume', action='store_true', help='이전 작업 지점부터 이어서 해독을 시작합니다.')
-    parser.add_argument('--workers', type=int, default=None, help='사용할 CPU 코어 수를 임의로 지정합니다.')
-    parser.add_argument('--start', type=str, default=None, help='탐색을 시작할 6자리 문자열 암호 (예: 000000)')
-    parser.add_argument('--end', type=str, default=None, help='탐색을 종료할 6자리 문자열 암호 (예: zzzzzz)')
-    parsed_args = parser.parse_args()
-    
-    start_idx = 0
-    end_idx = BASE ** PASSWORD_LENGTH
-    
-    if parsed_args.start:
-        start_idx = password_to_index(parsed_args.start)
-    if parsed_args.end:
-        # 사용자가 지정한 종료 암호까지 온전히 탐색(Inclusive)할 수 있도록 범위 끝(end_idx)에 1을 더해줍니다.
-        end_idx = password_to_index(parsed_args.end) + 1
-    if start_idx >= end_idx:
-        raise ValueError('시작 범위가 종료 범위보다 크거나 같습니다.')
-        
-    return SearchConfig(
-        reverse=parsed_args.reverse,
-        resume=parsed_args.resume,
-        workers=parsed_args.workers,
-        start_index=start_idx,
-        end_index=end_idx
-    )
+# ── 6. 진입점 (Entry Point) ──
 
 def main():
     try:
