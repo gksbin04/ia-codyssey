@@ -322,44 +322,44 @@ def unlock_zip(config):
         return
 
     # Manager 객체를 통해 여러 프로세스가 동시에 접근해도 안전한 공유 메모리 공간을 생성합니다.
-    manager = multiprocessing.Manager()
-    worker_count, total_attempts_counter, counter_lock, worker_positions, worker_ranges = setup_search_environment(config, manager)
-            
-    worker_args = []
-    for i in range(worker_count):
-        worker_range = worker_ranges[i]
-        worker_args.append((i, config.zip_path, worker_range['start'], worker_range['end'], check_byte, encrypted_header, total_attempts_counter, counter_lock, config.reverse, worker_positions, config.charset, config.password_length, config.base))
+    with multiprocessing.Manager() as manager:
+        worker_count, total_attempts_counter, counter_lock, worker_positions, worker_ranges = setup_search_environment(config, manager)
+                
+        worker_args = []
+        for i in range(worker_count):
+            worker_range = worker_ranges[i]
+            worker_args.append((i, config.zip_path, worker_range['start'], worker_range['end'], check_byte, encrypted_header, total_attempts_counter, counter_lock, config.reverse, worker_positions, config.charset, config.password_length, config.base))
 
-    # 작업자 프로세스를 관리할 Pool을 생성하고, 비동기 방식(apply_async)으로 각 코어에 작업을 분배합니다.
-    with multiprocessing.Pool(processes=worker_count) as pool:
-        async_results = [pool.apply_async(search_password_chunk, args) for args in worker_args]
-        
-        try:
-            found_password, is_all_completed = monitor_workers(
-                async_results, config, worker_count, total_attempts_counter, 
-                worker_positions, worker_ranges, started_at
-            )
-        except KeyboardInterrupt:
-            print('\n\n[경고] 사용자에 의해 해독이 중단되었습니다. 진행 상황을 저장합니다...')
+        # 작업자 프로세스를 관리할 Pool을 생성하고, 비동기 방식(apply_async)으로 각 코어에 작업을 분배합니다.
+        with multiprocessing.Pool(processes=worker_count) as pool:
+            async_results = [pool.apply_async(search_password_chunk, args) for args in worker_args]
+            
             try:
-                save_checkpoint(config, worker_count, total_attempts_counter, worker_positions, worker_ranges)
-                print('저장 완료! 다음 실행 시 `--resume` 옵션을 주면 이어서 실행됩니다.')
-            except Exception as e:
-                print(f'체크포인트 저장 중 오류 발생: {e}')
-        except Exception as e:
-            print(f'\n\n[오류] 해독 도중 예기치 않은 에러가 발생했습니다: {e}')
-        else:
-            # 정상 종료 시 결과 처리
-            if found_password or is_all_completed:
+                found_password, is_all_completed = monitor_workers(
+                    async_results, config, worker_count, total_attempts_counter, 
+                    worker_positions, worker_ranges, started_at
+                )
+            except KeyboardInterrupt:
+                print('\n\n[경고] 사용자에 의해 해독이 중단되었습니다. 진행 상황을 저장합니다...')
                 try:
-                    if os.path.exists(config.checkpoint_path):
-                        os.remove(config.checkpoint_path) # 완료 후엔 체크포인트 삭제
-                except OSError as e:
-                    print(f'\n[경고] 체크포인트 파일 삭제 실패: {e}')
-            handle_search_result(found_password, total_attempts_counter, started_at, config)
-        finally:
-            pool.terminate() # 어떤 상황이든 마지막엔 남은 작업자 프로세스 강제 종료 및 자원 반환
-            pool.join()
+                    save_checkpoint(config, worker_count, total_attempts_counter, worker_positions, worker_ranges)
+                    print('저장 완료! 다음 실행 시 `--resume` 옵션을 주면 이어서 실행됩니다.')
+                except Exception as e:
+                    print(f'체크포인트 저장 중 오류 발생: {e}')
+            except Exception as e:
+                print(f'\n\n[오류] 해독 도중 예기치 않은 에러가 발생했습니다: {e}')
+            else:
+                # 정상 종료 시 결과 처리
+                if found_password or is_all_completed:
+                    try:
+                        if os.path.exists(config.checkpoint_path):
+                            os.remove(config.checkpoint_path) # 완료 후엔 체크포인트 삭제
+                    except OSError as e:
+                        print(f'\n[경고] 체크포인트 파일 삭제 실패: {e}')
+                handle_search_result(found_password, total_attempts_counter, started_at, config)
+            finally:
+                pool.terminate() # 어떤 상황이든 마지막엔 남은 작업자 프로세스 강제 종료 및 자원 반환
+                pool.join()
 
 def parse_args() -> SearchConfig:
     '''명령행 인자를 파싱하여 설정 객체를 반환합니다.'''
