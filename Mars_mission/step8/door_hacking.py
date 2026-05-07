@@ -458,7 +458,7 @@ def unlock_zip(config):
         counter_lock = manager.Lock()
         worker_positions = manager.list(positions)
                 
-        # 작업 구역 분배가 끝나고 확정된 실제 탐색 정보를 사용자 화면에 명확하게 표시합니다.
+        # 작업 구역 분배가 끝나고 확정된 실제 탐색 정보를 사용자 화면에 명확하게 표시합니다.  
         actual_start = index_to_password(worker_ranges[0]['start'])
         actual_end = index_to_password(worker_ranges[-1]['end'] - 1)
         print(f'\n[탐색 설정 정보]')
