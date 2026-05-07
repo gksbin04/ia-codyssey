@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import zipfile
-import time
+import zlib
+import struct
 import multiprocessing
 import os
-import argparse
-import struct
-import json
 from pathlib import Path
+import json
+import argparse
+import time
 import string
 from dataclasses import dataclass
 from typing import Any
-import zlib
 
 # 스크립트 실행 위치와 상관없이 항상 동일한 경로(현재 파일 기준)를 참조하도록 절대 경로를 설정합니다.
 BASE_DIR = Path(__file__).resolve().parent
@@ -99,7 +99,7 @@ def password_to_index(password: str) -> int:
     Raises:
         ValueError: 비밀번호의 길이가 다르거나 유효하지 않은 문자가 포함된 경우
     '''
-    password = password.lower()
+    password = password.lower() # 대소문자 구분 없이 처리하기 위해 입력을 항상 소문자로 변환합니다.
     if len(password) != PASSWORD_LENGTH or any(char not in CHARSET for char in password):
         raise ValueError(f'비밀번호는 {PASSWORD_LENGTH}자리의 유효한 영숫자로만 구성되어야 합니다.')
     
@@ -131,6 +131,7 @@ def create_password_generator():
         function: 인덱스(int)를 인자로 받아 bytes 암호를 반환하는 발전기(Generator) 함수
     '''
     # N진법 변환 시 매번 거듭제곱 연산을 하면 느리므로, 각 자리의 가중치(Base^N)를 리스트로 미리 계산해 둡니다.
+    # 예를 들어, 6자리 암호라면 [BASE^5, BASE^4, BASE^3, BASE^2, BASE^1, BASE^0] 형태로 저장됩니다.
     powers = [BASE ** i for i in range(PASSWORD_LENGTH - 1, -1, -1)]
     charset_bytes = CHARSET.encode('utf-8')
     
@@ -148,10 +149,12 @@ def save_checkpoint(reverse, total_attempts, positions, worker_ranges):
     
     Args:
         reverse (bool): 역순 탐색 여부
+        cores (int): 사용할 코어 수
         total_attempts (int): 전체 누적 시도 횟수
         positions (list): 워커별 현재 탐색 위치 목록
         worker_ranges (list): 워커별 할당된 초기 탐색 범위 정보
     '''
+    # 딕셔너리 생성 시에도 키 순서를 명확히 하여, 저장되는 JSON 파일의 구조가 항상 일정하도록 합니다. (가독성 향상)
     checkpoint_data = {
         'reverse': reverse,
         'cores': len(worker_ranges),
@@ -181,22 +184,31 @@ def extract_zip_info():
     '''
     try:
         with zipfile.ZipFile(ZIP_FILE_PATH) as archive:
+            # ZIP 파일이 비어 있거나 읽을 수 없는 경우를 대비하여 검사합니다.
             if not archive.infolist():
                 return None, None
+            # 첫 번째 파일([0])의 메타데이터(파일 이름, 압축 방식, CRC32, 수정 시간, 플래그 등)를 가져옵니다.
             target_file_info = archive.infolist()[0]
             # ZipCrypto 규약: 데이터 디스크립터 플래그(0x08) 활성화 여부에 따라 
             # 검증용 1바이트(check_byte)를 파일 수정 시간 또는 CRC32에서 추출합니다.
-            check_byte = (target_file_info._raw_time >> 8) & 0xFF if target_file_info.flag_bits & 0x08 else (target_file_info.CRC >> 24) & 0xFF
+            if target_file_info.flag_bits & 0x08:
+                check_byte = (target_file_info._raw_time >> 8) & 0xFF
+            else:
+                check_byte = (target_file_info.CRC >> 24) & 0xFF
             
             with open(ZIP_FILE_PATH, 'rb') as raw_file:
                 # 파일의 로컬 헤더 위치로 이동하여, 헤더 크기와 가변 필드 길이를 읽어옵니다.
                 raw_file.seek(target_file_info.header_offset)
+                # 헤더의 고정 크기(보통 30바이트)만큼 바이너리 데이터를 읽어옵니다.
                 file_header = raw_file.read(zipfile.sizeFileHeader)
+                # 기계어로 된 헤더 데이터를 파이썬이 다룰 수 있는 튜플(숫자 묶음)로 변환(unpack)합니다.
                 header_fields = struct.unpack(zipfile.structFileHeader, file_header)
+                # 언팩된 데이터에서 '파일 이름 길이'와 '추가 필드 길이'를 가져옵니다.
                 filename_length = header_fields[zipfile._FH_FILENAME_LENGTH]
                 extra_field_length = header_fields[zipfile._FH_EXTRA_FIELD_LENGTH]
-                # 로컬 헤더, 파일명, 추가 필드(Extra Field) 영역을 모두 건너뛰어, 실제 암호화된 12바이트 헤더의 시작 위치로 이동합니다.
+                # [헤더 시작점 + 고정크기 + 파일명 길이 + 추가필드 길이]를 더해 실제 데이터의 시작점(오프셋)으로 정확히 이동합니다.
                 raw_file.seek(target_file_info.header_offset + zipfile.sizeFileHeader + filename_length + extra_field_length)
+                # 그 위치에서 우리가 해독해야 할 12바이트의 암호화 헤더만 쏙 빼옵니다.
                 encrypted_header = raw_file.read(12)
         return check_byte, encrypted_header
     except (zipfile.BadZipFile, OSError, struct.error) as e:
@@ -209,7 +221,7 @@ def test_password(archive, target_file_info, candidate_password_bytes, encrypted
     
     Args:
         archive (zipfile.ZipFile): 검사할 ZIP 파일 객체
-        target_file_info (zipfile.ZipInfo): 타겟 파일의 정보 구조체
+        target_file_info (zipfile.ZipInfo): 타겟 파일의 메타 데이터 정보 객체
         candidate_password_bytes (bytes): 테스트할 암호 후보 바이트열
         encrypted_header (bytes): 원본 ZIP 파일의 12바이트 암호화 헤더
         check_byte (int): 헤더 복호화 성공 여부를 판가름할 기준 바이트
@@ -266,7 +278,7 @@ def search_password_chunk(
             target_file_info = archive.infolist()[0]
             local_attempts = 0
             
-            # 메인 프로세스에서 계산해 준 시작, 종료, 증감(step) 값을 바탕으로 반복문(range)을 생성합니다.
+            # 메인 프로세스에서 계산해 준 시작, 종료, 증감: 정방향역방향(step) 값을 바탕으로 반복문(range)을 생성합니다.
             start_position = worker_positions[worker_id]
             index_iterator = range(start_position, end_condition, step)
             
