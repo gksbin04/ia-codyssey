@@ -13,19 +13,24 @@
 
 ```
 Mars_mission/step9/
-├── main.py          # 메인 프로그램
-├── dictionary.txt   # 사전 단어 목록
-├── password.txt     # 암호문 파일
-├── result.txt       # 해독 결과 저장 파일
-├── config.py        # 점수 가중치와 기준 설정
-└── ngrams.py        # N-gram 및 금지 조합 데이터
+├── src/ # 파이썬 소스 코드 
+| ├── main.py # 메인 프로그램
+│ ├── config.py # 점수 가중치와 기준 설정
+│ └── ngrams.py # N-gram 및 금지 조합 데이터
+├── data/ # 데이터 및 텍스트 파일
+│ ├── dictionary.txt # 사전 단어 목록
+│ ├── password.txt # 암호문 파일
+│ └── result.txt # 해독 결과 저장 파일
+└── docs/ # 프로젝트 문서
+| ├── overview.md # 개요 문서
+| └── analysis.md # 기술 검토 문서
 ```
 
 ---
 
 ## 3. 구현 개요
 
-- `password.txt`에서 암호문을 읽음
+- `password.txt`에서 여러 줄(Enter)로 구분된 암호문을 읽어 각 줄별로 독립적으로 해독
 - `caesar_cipher_decode(target_text, shift)`로 1~26 shift 해독
 - 각 후보 결과에 점수를 매겨 가장 영어에 가까운 결과를 선택
 - `result.txt`에 최종 해독 결과 저장
@@ -44,6 +49,7 @@ Mars_mission/step9/
 - `result.txt` 저장: ✅
 - 파일 입출력 예외 처리: ✅
 - 사전 단어 탐지로 자동 반복 중단(보너스): ✅
+- 다중 라인(줄바꿈) 암호문 독립 해독 지원: ✅
 
 ---
 
