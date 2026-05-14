@@ -10,13 +10,20 @@ from ngrams import COMMON_BIGRAMS, COMMON_TRIGRAMS, FORBIDDEN_BIGRAMS
 
 
 def get_file_path(filename: str) -> str:
-    """현재 파일 기준 절대 경로를 반환한다."""
+    """
+    현재 파일 기준 절대 경로를 반환한다.
+    어느 위치에서 스크립트를 실행하더라도 파일 경로를 올바르게 찾을 수 있도록 방지한다.
+    """
     current_dir = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(current_dir, filename)
 
 
 def load_dictionary(file_path: str) -> Set[str]:
-    """사전 파일을 읽어 단어 집합을 반환한다."""
+    """
+    사전 파일을 읽어 단어 집합(Set)을 반환한다.
+    - Set 자료구조를 사용하여 단어 검색 속도를 O(1)로 최적화.
+    - 파일 누락, 인코딩 오류 등을 대비한 예외 처리를 통해 안정성을 확보.
+    """
     try:
         with open(file_path, 'r', encoding='utf-8') as file:
             return {line.strip().lower() for line in file if line.strip()}
@@ -32,24 +39,31 @@ def load_dictionary(file_path: str) -> Set[str]:
 
 
 def caesar_cipher_decode(target_text: str, shift: int) -> str:
-    """카이사르 암호를 주어진 자리수로 해독한다."""
+    """
+    카이사르 암호를 주어진 자리수(shift)만큼 이동시켜 해독한다.
+    알파벳 대문자와 소문자를 각각 구분하여 순환(shift) 처리하며, 특수문자나 공백은 원형을 유지한다.
+    """
     result = []
     for char in target_text:
         if char.islower():
+            # 소문자인 경우: 아스키코드 값을 사용하여 shift 연산 후 다시 알파벳으로 변환
             decoded = chr((ord(char) - ord('a') - shift) % 26 + ord('a'))
             result.append(decoded)
         elif char.isupper():
+            # 대문자인 경우: 'A'를 기준으로 shift 연산 수행
             decoded = chr((ord(char) - ord('A') - shift) % 26 + ord('A'))
             result.append(decoded)
         else:
+            # 알파벳이 아닌 문자(공백, 구두점 등)는 변환 없이 그대로 유지
             result.append(char)
     return ''.join(result)
 
 
 def calculate_ngram_score(text: str) -> int:
     """
-    N-gram 분석으로 점수를 계산한다.
-    빅람과 트라이그램의 빈도를 기반으로 영어스러운 정도를 평가.
+    N-gram 분석 기법을 활용하여 점수를 계산한다.
+    빅람(2글자)과 트라이그램(3글자)의 빈도를 대조하여, 
+    해당 문장이 얼마나 자연스러운 영어 패턴을 가지고 있는지 통계적으로 평가한다.
     """
     score = 0
     text_lower = text.lower()
@@ -73,8 +87,9 @@ def calculate_ngram_score(text: str) -> int:
 
 def calculate_penalty_score(text: str) -> int:
     """
-    금지된 조합에 대한 감점 시스템.
-    영어에서 매우 희귀하거나 불가능한 문자 조합이 있으면 점수를 깎는다.
+    부자연스러운 문자 조합에 대한 감점(패널티) 시스템.
+    정상적인 영어 문장에서는 등장할 수 없거나 매우 희귀한 문자 패턴이 발생할 경우, 
+    해당 결과의 점수를 크게 삭감하여 오답을 배제한다.
     """
     penalty = 0
     text_lower = text.lower()
@@ -94,7 +109,10 @@ def calculate_penalty_score(text: str) -> int:
 
 
 def analyze_vowel_ratio(text: str) -> int:
-    """모음 비율을 분석하여 점수를 반환한다."""
+    """
+    문장 내 모음(a, e, i, o, u) 비율을 분석하여 점수를 반환한다.
+    일반적인 영어 문장이 일정 비율(약 30~40%)의 모음을 포함한다는 통계적 특성을 이용한다.
+    """
     vowels = sum(1 for c in text.lower() if c in 'aeiou')
     consonants = sum(1 for c in text.lower() if c.isalpha() and c not in 'aeiou')
     total = vowels + consonants
@@ -105,32 +123,39 @@ def analyze_vowel_ratio(text: str) -> int:
     vowel_ratio = vowels / total
 
     if THRESHOLDS['vowel_ratio_fair'] <= vowel_ratio <= THRESHOLDS['vowel_ratio_good']:
+        # 모음 비율이 최적의 범위(good) 내에 있을 경우
         return SCORE_WEIGHTS['vowel_ratio_good']
     elif THRESHOLDS['vowel_ratio_min'] <= vowel_ratio <= THRESHOLDS['vowel_ratio_max']:
+        # 모음 비율이 허용 가능한 범위(fair) 내에 있을 경우
         return SCORE_WEIGHTS['vowel_ratio_fair']
 
     return 0
 
 
 def calculate_dictionary_score(words: List[str], dictionary: Set[str]) -> Tuple[int, int, int]:
-    """사전 기반 점수를 계산한다."""
+    """
+    주어진 단어 목록과 사전 데이터를 대조하여 점수를 계산한다.
+    오탐지를 줄이기 위해 최소 글자 수 이상인 단어만 평가 대상에 포함한다.
+    """
     valid_words = [w for w in words if len(w) >= THRESHOLDS['min_word_length'] and w in dictionary]
 
+    # 사전에 존재하는 단어 수에 비례하여 기본 점수와 보너스 점 부여
     base_score = len(valid_words) * SCORE_WEIGHTS['dict_base']
     bonus_score = len(valid_words) * SCORE_WEIGHTS['dict_bonus']
+    # 단어의 길이에 비례하여 추가 점수 부여 (긴 단어일수록 우연일 확률이 낮기 때문)
     length_score = sum(len(w) for w in valid_words) * SCORE_WEIGHTS['word_length']
 
     return base_score, bonus_score, length_score
 
 
 def calculate_common_words_score(words: List[str]) -> int:
-    """일반 단어 포함 점수를 계산한다."""
+    """핵심 영어 단어(the, and, is 등)가 포함되어 있는지 검사하여 가산점을 부여한다."""
     common_count = sum(1 for w in words if w in COMMON_WORDS)
     return common_count * SCORE_WEIGHTS['common_word']
 
 
 def calculate_word_count_score(words: List[str]) -> int:
-    """단어 개수 기반 점수를 계산한다."""
+    """단어 개수 기반 점수를 계산한다. 여러 단어로 분리될수록 자연스러운 문장일 확률이 높다고 가정한다."""
     if len(words) > 1:
         return (len(words) - 1) * SCORE_WEIGHTS['word_count']
     return 0
@@ -140,7 +165,8 @@ def calculate_hybrid_score(text: str, dictionary: Set[str]) -> Tuple[int, Dict[s
     """
     사전 대조와 통계의 하이브리드 가중치 적용.
     사전에 있는 단어가 발견되면 보너스 점수를 부여하고,
-    통계적 분석도 함께 수행한다.
+    N-gram, 모음 비율 등 통계적 분석도 함께 수행하여 종합 점수를 도출한다.
+    단순히 하나의 기준에 의존하지 않아 더욱 정교한 해독 검증이 가능하다.
 
     Returns:
         Tuple[int, Dict[str, int]]: (총점, 점수 분석)
@@ -187,7 +213,11 @@ def calculate_hybrid_score(text: str, dictionary: Set[str]) -> Tuple[int, Dict[s
 
 
 def solve_mission_advanced() -> None:
-    """고급 하이브리드 방식 카이사르 암호 해독을 수행한다."""
+    """
+    고급 하이브리드 방식 카이사르 암호 해독을 수행하는 메인 함수.
+    모든 가능한 shift(1~26) 경우의 수를 테스트하고 점수를 매겨, 
+    가장 점수가 높은 문장을 최종 해독 결과로 선정하여 파일로 저장한다.
+    """
     password_path = get_file_path('password.txt')
     dictionary_path = get_file_path('dictionary.txt')
     result_path = get_file_path('result.txt')
@@ -210,9 +240,10 @@ def solve_mission_advanced() -> None:
 
     results = []
 
-    # 모든 shift에 대해 점수 계산
+    # 모든 shift(1~26)에 대해 암호 해독 시도 및 점수 계산
     for shift in range(1, 27):
         decoded = caesar_cipher_decode(cipher_text, shift)
+        # 하이브리드 점수 모델을 사용하여 각 해독 결과의 영어 유사성 평가
         score, breakdown = calculate_hybrid_score(decoded, dictionary)
 
         results.append({
@@ -224,7 +255,7 @@ def solve_mission_advanced() -> None:
 
         print(f'Shift {shift:2d}: {decoded:20s} | 점수: {score:4d}')
 
-    # 최고 점수의 결과 선택
+    # 종합 점수가 가장 높은 결과를 최적의 해독본(정답)으로 선택
     best_result = max(results, key=lambda x: x['score'])
     final_result = best_result['text']
 

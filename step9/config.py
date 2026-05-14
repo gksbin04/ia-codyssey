@@ -1,28 +1,29 @@
 # 카이사르 암호 해독기 설정
 # 점수 가중치 및 임계값 설정
+# 이 파일은 하이브리드 점수 모델의 세부 조정을 담당하며, 각 평가 요소의 비중을 결정합니다.
 
 SCORE_WEIGHTS = {
-    'dict_base': 20,      # 사전 단어 기본 점수
-    'dict_bonus': 10,     # 사전 단어 보너스 점수
-    'common_word': 15,    # 일반 단어 점수
-    'word_length': 1,     # 단어 길이 점수
-    'vowel_ratio_good': 30,  # 좋은 모음 비율 점수
-    'vowel_ratio_fair': 15,  # 보통 모음 비율 점수
-    'word_count': 5,      # 단어 개수 점수
-    'forbidden_bigram': 50,  # 금지 빅람 감점
-    'rare_pattern': 30,   # 희귀 패턴 감점
+    'dict_base': 20,         # 사전 단어 기본 점수 (사전에 존재하는 단어 발견 시 부여)
+    'dict_bonus': 10,        # 사전 단어 보너스 점수 (단어 발견에 대한 추가 확신 보너스)
+    'common_word': 15,       # 일반 단어 점수 (the, and 등 핵심 영단어에 대한 가산점)
+    'word_length': 1,        # 단어 길이 점수 (긴 단어일수록 우연일 확률이 낮으므로 글자당 부여)
+    'vowel_ratio_good': 30,  # 좋은 모음 비율 점수 (영어의 이상적인 모음 비율에 근접할 때 부여)
+    'vowel_ratio_fair': 15,  # 보통 모음 비율 점수 (허용 가능한 수준의 모음 비율일 때 부여)
+    'word_count': 5,         # 단어 개수 점수 (공백으로 구분된 유효한 단어가 많을수록 가산점)
+    'forbidden_bigram': 50,  # 금지 빅람 감점 (영어에서 나올 수 없는 글자 조합 발견 시 큰 감점)
+    'rare_pattern': 30,      # 희귀 패턴 감점 (qq, vv 등 연속된 희귀 글자 발견 시 감점)
 }
 
 THRESHOLDS = {
-    'min_word_length': 3,
-    'vowel_ratio_min': 0.20,
-    'vowel_ratio_fair': 0.25,
-    'vowel_ratio_max': 0.50,
-    'vowel_ratio_good': 0.45,
+    'min_word_length': 3,     # 평가에 반영할 최소 단어 길이 (너무 짧은 단어는 오탐지 확률이 높음)
+    'vowel_ratio_min': 0.20,  # 허용하는 최소 모음 비율 (20%)
+    'vowel_ratio_fair': 0.25, # 보통 수준의 점수를 받기 위한 최소 모음 비율 (25%)
+    'vowel_ratio_max': 0.50,  # 허용하는 최대 모음 비율 (50%)
+    'vowel_ratio_good': 0.45, # 최고 점수를 받는 상한 모음 비율 (45%)
 }
 
-# 영어 일반 단어
+# 영어 일반 단어 (사전 데이터가 없어도 우선적으로 탐지하여 점수를 부여할 핵심 단어 목록)
 COMMON_WORDS = {'the', 'and', 'is', 'to', 'a', 'of', 'in', 'i', 'love', 'mars', 'you', 'it'}
 
-# 희귀 패턴 (감점 대상)
+# 희귀 패턴 (감점 대상 - 연속된 동일 자음 등 자연스러운 영어에서 거의 사용되지 않는 패턴)
 RARE_PATTERNS = ['qq', 'vv', 'ww', 'xx', 'yy', 'zz']
