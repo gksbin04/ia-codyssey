@@ -1,0 +1,26 @@
+# N-gram 데이터베이스
+# 영어 텍스트 코퍼스에서 추출된 빈도 기반 점수
+
+# 일반적인 빅람 (2글자 조합) 점수
+COMMON_BIGRAMS = {
+    'th': 15, 'he': 12, 'in': 10, 'er': 9, 'an': 8, 're': 7, 'es': 7, 'on': 6,
+    'st': 6, 'nt': 6, 'en': 6, 'at': 6, 'ed': 5, 'nd': 5, 'to': 5, 'or': 5,
+    'ea': 5, 'ti': 5, 'ar': 5, 'te': 5, 'ng': 5, 'al': 4, 'it': 4, 'as': 4,
+    'is': 4, 'ha': 4, 'et': 4, 'se': 4, 'ou': 4, 'hi': 4, 'le': 4, 've': 4,
+    'co': 4, 'me': 4, 'de': 4, 'ri': 4, 'ro': 4, 'ic': 4, 'ne': 4, 'ma': 4
+}
+
+# 일반적인 트라이그램 (3글자 조합) 점수
+COMMON_TRIGRAMS = {
+    'the': 25, 'and': 15, 'ing': 12, 'her': 8, 'hat': 7, 'his': 7, 'tha': 6,
+    'ere': 6, 'for': 6, 'ent': 6, 'ion': 6, 'ter': 5, 'was': 5, 'you': 5,
+    'ith': 5, 'ver': 5, 'all': 5, 'wit': 5, 'thi': 5, 'tio': 4, 'eve': 4,
+    'rea': 4, 'com': 4, 'par': 4, 'con': 4, 'men': 4, 'est': 4, 'sta': 4,
+    'lar': 4, 'but': 4, 'can': 4, 'had': 4, 'by': 4, 'not': 4, 'one': 4
+}
+
+# 금지된 빅람 (영어에서 매우 희귀하거나 불가능한 패턴)
+FORBIDDEN_BIGRAMS = {
+    'jq', 'jz', 'qj', 'qz', 'vj', 'vq', 'vx', 'wx', 'xj', 'zx',
+    'bz', 'cz', 'dz', 'fz', 'gz', 'hz', 'jz', 'kz', 'lz', 'mz', 'nz', 'pz', 'rz', 'tz', 'vz', 'wz', 'xz', 'zz'
+}
