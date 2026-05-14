@@ -215,8 +215,8 @@ def calculate_hybrid_score(text: str, dictionary: Set[str]) -> Tuple[int, Dict[s
 def solve_mission_advanced() -> None:
     """
     고급 하이브리드 방식 카이사르 암호 해독을 수행하는 메인 함수.
-    모든 가능한 shift(1~26) 경우의 수를 테스트하고 점수를 매겨, 
-    가장 점수가 높은 문장을 최종 해독 결과로 선정하여 파일로 저장한다.
+    파일 내 여러 줄의 암호문(Enter로 구분)이 있을 경우, 
+    각 줄을 독립적으로 해독하고 최적의 결과를 찾아 저장한다.
     """
     password_path = get_file_path('password.txt')
     dictionary_path = get_file_path('dictionary.txt')
@@ -225,59 +225,67 @@ def solve_mission_advanced() -> None:
     # 암호문 읽기
     try:
         with open(password_path, 'r', encoding='utf-8') as file:
-            cipher_text = file.read().strip()
+            # Enter(줄바꿈)를 기준으로 여러 암호문을 리스트로 저장
+            cipher_lines = [line.strip() for line in file.readlines() if line.strip()]
     except FileNotFoundError:
         print(f'오류: 암호 파일을 찾을 수 없습니다 - {password_path}')
         return
     except Exception as e:
         print(f'오류: 암호 파일 읽기 실패 - {e}')
         return
+        
+    if not cipher_lines:
+        print('오류: 암호문이 비어있습니다.')
+        return
 
     # 사전 로드
     dictionary = load_dictionary(dictionary_path)
 
-    print(f'--- 고급 하이브리드 방식 암호 해독: {cipher_text} ---\n')
+    final_decoded_lines = []
 
-    results = []
+    # 각 줄별로 독립적으로 해독 수행
+    for idx, cipher_text in enumerate(cipher_lines, 1):
+        print(f'\n--- [문장 {idx}] 고급 하이브리드 방식 암호 해독: {cipher_text} ---')
+        
+        results = []
 
-    # 모든 shift(1~26)에 대해 암호 해독 시도 및 점수 계산
-    for shift in range(1, 27):
-        decoded = caesar_cipher_decode(cipher_text, shift)
-        # 하이브리드 점수 모델을 사용하여 각 해독 결과의 영어 유사성 평가
-        score, breakdown = calculate_hybrid_score(decoded, dictionary)
+        # 모든 shift(1~26)에 대해 암호 해독 시도 및 점수 계산
+        for shift in range(1, 27):
+            decoded = caesar_cipher_decode(cipher_text, shift)
+            score, breakdown = calculate_hybrid_score(decoded, dictionary)
 
-        results.append({
-            'shift': shift,
-            'text': decoded,
-            'score': score,
-            'breakdown': breakdown
-        })
+            results.append({
+                'shift': shift,
+                'text': decoded,
+                'score': score,
+                'breakdown': breakdown
+            })
 
-        print(f'Shift {shift:2d}: {decoded:20s} | 점수: {score:4d}')
+            print(f'Shift {shift:2d}: {decoded:20s} | 점수: {score:4d}')
 
-    # 종합 점수가 가장 높은 결과를 최적의 해독본(정답)으로 선택
-    best_result = max(results, key=lambda x: x['score'])
-    final_result = best_result['text']
+        # 종합 점수가 가장 높은 결과를 최적의 해독본(정답)으로 선택
+        best_result = max(results, key=lambda x: x['score'])
+        final_decoded_lines.append(f"[Shift {best_result['shift']}] {best_result['text']}")
 
-    print(f'\n🏆 최고 점수: Shift {best_result["shift"]} - "{final_result}" (점수: {best_result["score"]})')
+        print(f'\n🏆 [문장 {idx}] 최고 점수: Shift {best_result["shift"]} - "{best_result["text"]}" (점수: {best_result["score"]})')
 
-    # 상세 점수 분석 출력
-    print('\n📊 점수 분석:')
-    breakdown = best_result['breakdown']
-    print(f'  사전 기본: {breakdown["dict_base"]:3d}점')
-    print(f'  사전 보너스: {breakdown["dict_bonus"]:3d}점')
-    print(f'  일반 단어: {breakdown["common_words"]:3d}점')
-    print(f'  단어 길이: {breakdown["word_length"]:3d}점')
-    print(f'  모음 비율: {breakdown["vowel_ratio"]:3d}점')
-    print(f'  단어 개수: {breakdown["word_count"]:3d}점')
-    print(f'  N-gram: {breakdown["ngram"]:3d}점')
-    print(f'  감점: {breakdown["penalty"]:3d}점')
+        # 상세 점수 분석 출력
+        print('📊 점수 분석:')
+        breakdown = best_result['breakdown']
+        print(f'  사전 기본: {breakdown["dict_base"]:3d}점')
+        print(f'  사전 보너스: {breakdown["dict_bonus"]:3d}점')
+        print(f'  일반 단어: {breakdown["common_words"]:3d}점')
+        print(f'  단어 길이: {breakdown["word_length"]:3d}점')
+        print(f'  모음 비율: {breakdown["vowel_ratio"]:3d}점')
+        print(f'  단어 개수: {breakdown["word_count"]:3d}점')
+        print(f'  N-gram: {breakdown["ngram"]:3d}점')
+        print(f'  감점: {breakdown["penalty"]:3d}점')
 
-    # 결과 저장
+    # 결과 저장 (여러 줄로 저장)
     try:
         with open(result_path, 'w', encoding='utf-8') as file:
-            file.write(final_result)
-        print(f'\n결과가 저장되었습니다: {result_path}')
+            file.write('\n'.join(final_decoded_lines))
+        print(f'\n모든 문장의 해독 결과가 저장되었습니다: {result_path}')
     except Exception as e:
         print(f'결과 저장 중 오류 발생: {e}')
 
