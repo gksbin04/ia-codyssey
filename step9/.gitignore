@@ -1,0 +1,40 @@
+# --- Python 관련 임시 파일 ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# --- 가상 환경 (Virtual Environments) ---
+.venv/
+venv/
+ENV/
+
+# --- 프로젝트 결과물 (매번 바뀌는 출력 파일) ---
+# 해독 결과는 로컬에서만 확인하고 굳이 원격 저장소에 올릴 필요가 없습니다.
+result.txt
+
+# --- 운영체제(OS) 관련 시스템 파일 ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- IDE(에디터) 설정 파일 ---
+.vscode/
+.idea/
+*.swp

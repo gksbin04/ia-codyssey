@@ -12,6 +12,7 @@ class CalculatorModel:
     # ── 1. 상태 관리 및 초기화 ──
 
     def reset(self):
+        """계산기의 모든 내부 상태(변수, 연산자, 식)를 초기화합니다."""
         self.current_input = ''
         self.previous_input = ''
         self.operator = None
@@ -24,6 +25,7 @@ class CalculatorModel:
     # ── 2. 사용자 입력 처리 ──
 
     def input_character(self, char):
+        """사용자가 입력한 숫자 또는 소수점('.') 문자를 처리하여 현재 입력값에 덧붙입니다."""
         if self.error_state:
             self.reset()
 
@@ -47,6 +49,7 @@ class CalculatorModel:
     # ── 3. 부가 기능 (명세 메소드) ──
 
     def negative_positive(self):
+        """현재 입력된 숫자의 부호(+/-)를 반전시킵니다."""
         if self.error_state:
             self.reset()
             return
@@ -60,6 +63,7 @@ class CalculatorModel:
             self.current_input = '-' + target
 
     def percent(self):
+        """현재 입력된 숫자를 백분율(1/100)로 계산하여 변환합니다."""
         if self.error_state:
             self.reset()
             return
@@ -76,21 +80,27 @@ class CalculatorModel:
     # ── 4. 사칙연산 (명세 메소드) ──
 
     def add(self):
+        """덧셈(+) 연산자를 설정합니다."""
         self.set_operator('+')
 
     def subtract(self):
+        """뺄셈(-) 연산자를 설정합니다."""
         self.set_operator('-')
 
     def multiply(self):
+        """곱셈(×) 연산자를 설정합니다."""
         self.set_operator('×')
 
     def divide(self):
+        """나눗셈(÷) 연산자를 설정합니다."""
         self.set_operator('÷')
 
     def equal(self):
+        """수식의 결과값(=)을 계산합니다."""
         self.calculate()
 
     def backspace(self):
+        """현재 입력 중인 숫자의 마지막 문자를 하나 지웁니다."""
         if self.error_state:
             self.reset()
             return
@@ -102,6 +112,7 @@ class CalculatorModel:
     # ── 5. 내부 연산 엔진 ──
 
     def set_operator(self, op):
+        """사칙연산 버튼이 눌렸을 때 연산자를 세팅하고, 필요시 이전 연산을 수행합니다."""
         if self.error_state:
             self.reset()
             return
@@ -128,6 +139,7 @@ class CalculatorModel:
         self.expression = f'{fmt_prev} {op}'
 
     def calculate(self):
+        """현재 저장된 피연산자와 연산자를 바탕으로 실제 수학 연산을 수행합니다."""
         if self.error_state:
             self.reset()
             return
@@ -183,6 +195,7 @@ class CalculatorModel:
     # ── 6. 데이터 포맷팅 및 반환 ──
 
     def _format_result(self, val_str):
+        """계산된 결과 문자열에서 불필요한 소수점이나 지수 표기법의 '0'을 깔끔하게 제거합니다."""
         if 'e' in val_str.lower():
             # 지수 표기법일 경우 불필요한 0 제거 (예: 1.20000e+05 -> 1.2e+05)
             base, exp = val_str.lower().split('e')
@@ -195,6 +208,7 @@ class CalculatorModel:
         return val_str
 
     def _format_for_display(self, text):
+        """화면에 출력하기 위해 숫자에 천 단위 콤마(,)를 삽입하고 형태를 정돈합니다."""
         if not text or text == 'Error' or 'e' in text.lower():
             return text
         is_neg = text.startswith('-')
@@ -207,6 +221,7 @@ class CalculatorModel:
         return f'-{res}' if is_neg else res
 
     def get_display_value(self):
+        """현재 메인 디스플레이(큰 글씨)에 표시할 값을 포맷팅하여 반환합니다."""
         if self.error_state:
             return 'Error'
         text = self.current_input or self.previous_input or '0'
@@ -215,11 +230,13 @@ class CalculatorModel:
         return self._format_for_display(text)
 
     def get_expression(self):
+        """화면 상단의 서브 디스플레이에 표시할 수식(예: 10 + 20 =)을 반환합니다."""
         if self.error_state:
             return ''
         return self.expression
 
     def get_active_operator(self):
+        """현재 입력 대기 중인 상태라면 활성화된 연산자를 반환합니다. (UI 하이라이트 용도)"""
         if self.error_state:
             return None
         return self.operator if self.new_input_expected else None
