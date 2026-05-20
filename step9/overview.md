@@ -13,17 +13,12 @@
 
 ```
 Mars_mission/step9/
-├── src/ # 파이썬 소스 코드 
-| ├── main.py # 메인 프로그램
-│ ├── config.py # 점수 가중치와 기준 설정
-│ └── ngrams.py # N-gram 및 금지 조합 데이터
-├── data/ # 데이터 및 텍스트 파일
-│ ├── dictionary.txt # 사전 단어 목록
-│ ├── password.txt # 암호문 파일
-│ └── result.txt # 해독 결과 저장 파일
-└── docs/ # 프로젝트 문서
-| ├── overview.md # 개요 문서
-| └── analysis.md # 기술 검토 문서
+├── main.py          # 메인 프로그램
+├── dictionary.txt   # 사전 단어 목록
+├── password.txt     # 암호문 파일
+├── result.txt       # 해독 결과 저장 파일
+├── config.py        # 점수 가중치와 기준 설정
+└── ngrams.py        # N-gram 및 금지 조합 데이터
 ```
 
 ---
