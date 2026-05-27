@@ -38,6 +38,7 @@ class AudioRecorder:
         
         # 하위에 records 폴더가 없으면 새로 생성합니다.
         self.record_dir.mkdir(parents=True, exist_ok=True)
+        self._cleanup_empty_folders()
 
     def record_audio(self) -> None:
         """시스템 마이크를 통해 사용자가 중단할 때까지 음성을 녹음한 후 파일명을 입력받아 저장합니다."""
@@ -188,15 +189,23 @@ class AudioRecorder:
             audio.terminate()
 
     def delete_audio(self, filename: str) -> None:
-        """저장된 음성 파일을 삭제합니다."""
+        """저장된 음성 파일과 추출된 텍스트(CSV) 파일을 함께 삭제합니다."""
         filepath = self.record_dir / filename
         if not filepath.exists():
             print('해당 파일을 찾을 수 없습니다.')
             return
             
+        csv_filepath = filepath.with_suffix('.csv')
+        
         try:
             filepath.unlink()
-            print(f'{filename} 파일이 삭제되었습니다.')
+            deleted_files = [filename]
+            
+            if csv_filepath.exists():
+                csv_filepath.unlink()
+                deleted_files.append(csv_filepath.name)
+                
+            print(f"다음 파일들이 삭제되었습니다: {', '.join(deleted_files)}")
         except OSError as e:
             print(f'파일 삭제 중 오류가 발생했습니다: {e}')
 
@@ -296,6 +305,30 @@ class AudioRecorder:
         if not found:
             print('검색된 결과가 없습니다.')
 
+    def _cleanup_empty_folders(self) -> None:
+        """내부 헬퍼: records 폴더 내의 사용되지 않는 빈 폴더를 깊은 곳부터 역순으로 확인하여 삭제합니다."""
+        if not self.record_dir.exists():
+            return
+            
+        # 하위 폴더들의 경로 깊이(parts)를 기준으로 내림차순 정렬하여 가장 깊은 곳부터 탐색 (Bottom-Up)
+        folders = sorted(
+            [d for d in self.record_dir.rglob('*') if d.is_dir()],
+            key=lambda p: len(p.parts),
+            reverse=True
+        )
+        
+        cleaned_count = 0
+        for folder in folders:
+            try:
+                if not any(folder.iterdir()):
+                    folder.rmdir()
+                    cleaned_count += 1
+            except OSError:
+                pass
+                
+        if cleaned_count > 0:
+            print(f'\n[시스템 정리] 사용되지 않는 빈 날짜 폴더 {cleaned_count}개를 자동으로 삭제했습니다.')
+
     def _get_all_wav_files(self) -> List[str]:
         """내부 헬퍼: records 폴더 내의 모든 wav 파일 상대 경로 반환"""
         # rglob('*.wav')를 사용하면 os.walk보다 훨씬 직관적이고 빠르게 모든 하위 폴더의 wav 파일을 탐색합니다.
@@ -394,48 +427,70 @@ def main() -> None:
     while True:
         print('\n[ J.A.V.I.S 음성 기록 시스템 ]')
         print('1. 음성 녹음 시작')
-        print('2. 녹음 파일 조회 (전체/기간)')
+        print('2. 녹음 파일 조회 (전체/기간/키워드)')
         print('3. 녹음 파일 재생')
         print('4. 녹음 파일 삭제')
-        print('5. STT 키워드 검색')
-        print('6. 시스템 종료')
+        print('5. 시스템 종료')
         
         choice = input('원하시는 메뉴 번호를 입력하세요: ')
         
-        if choice == '1':
-            recorder.record_audio()
-        elif choice == '2':
-            start = input('검색 시작 날짜 입력 (예: 20260520, 전체 조회는 엔터): ').strip()
-            if not start:
-                matched_files = recorder.list_all_records()
-            else:
-                end = input('검색 종료 날짜 입력 (예: 20260522): ').strip()
-                matched_files = recorder.show_records_in_range(start, end)
-                
-            target = select_file_index(matched_files, '재생할')
-            if target:
-                recorder.play_audio(target)
-        elif choice == '3':
-            all_files = recorder.list_all_records()
-            target = select_file_index(all_files, '재생할')
-            if target:
-                recorder.play_audio(target)
-        elif choice == '4':
-            all_files = recorder.list_all_records()
-            target = select_file_index(all_files, '삭제할')
-            if target:
-                confirm = input(f"'{target}' 파일을 정말 삭제하시겠습니까? (y/n): ")
-                if confirm.lower() == 'y':
-                    recorder.delete_audio(target)
-                else:
-                    print('삭제가 취소되었습니다.')
-        elif choice == '5':
-            recorder.search_keyword_in_csv()
-        elif choice == '6':
-            print('J.A.V.I.S 시스템을 종료합니다.')
-            break
-        else:
-            print('올바른 번호를 입력해주세요.')
+        match choice:
+            case '1':
+                recorder.record_audio()
+            case '2':
+                while True:
+                    print('\n[ 녹음 파일 조회 메뉴 ]')
+                    print('1. 전체 녹음 조회')
+                    print('2. 기간별 조회')
+                    print('3. STT 키워드 검색')
+                    print('4. 이전 메뉴로 돌아가기')
+                    
+                    sub_choice = input('원하시는 조회 메뉴 번호를 입력하세요: ')
+                    
+                    match sub_choice:
+                        case '1':
+                            matched_files = recorder.list_all_records()
+                            target = select_file_index(matched_files, '재생할')
+                            if target:
+                                recorder.play_audio(target)
+                            break
+                        case '2':
+                            start = input('검색 시작 날짜 입력 (예: 20260520): ').strip()
+                            if start:
+                                end = input('검색 종료 날짜 입력 (예: 20260522): ').strip()
+                                matched_files = recorder.show_records_in_range(start, end)
+                                target = select_file_index(matched_files, '재생할')
+                                if target:
+                                    recorder.play_audio(target)
+                            else:
+                                print('날짜가 정상적으로 입력되지 않았습니다.')
+                            break
+                        case '3':
+                            recorder.search_keyword_in_csv()
+                            break
+                        case '4':
+                            break
+                        case _:
+                            print('올바른 번호를 입력해주세요.')
+            case '3':
+                all_files = recorder.list_all_records()
+                target = select_file_index(all_files, '재생할')
+                if target:
+                    recorder.play_audio(target)
+            case '4':
+                all_files = recorder.list_all_records()
+                target = select_file_index(all_files, '삭제할')
+                if target:
+                    confirm = input(f"'{target}' 파일을 정말 삭제하시겠습니까? (y/n): ")
+                    if confirm.lower() == 'y':
+                        recorder.delete_audio(target)
+                    else:
+                        print('삭제가 취소되었습니다.')
+            case '5':
+                print('J.A.V.I.S 시스템을 종료합니다.')
+                break
+            case _:
+                print('올바른 번호를 입력해주세요.')
 
 
 if __name__ == '__main__':
