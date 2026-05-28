@@ -38,7 +38,63 @@ class AudioRecorder:
         
         # 하위에 records 폴더가 없으면 새로 생성합니다.
         self.record_dir.mkdir(parents=True, exist_ok=True)
+        # 시스템 시작 시 빈 날짜 폴더 정리
         self._cleanup_empty_folders()
+
+    def _format_seconds(self, seconds: float) -> str:
+        """초 단위의 시간을 MM:SS 형식의 문자열로 변환합니다."""
+        m, s = divmod(int(seconds), 60)
+        return f'{m:02d}:{s:02d}'
+
+    def _extract_date(self, rel_path: str) -> Optional[datetime]:
+        """내부 헬퍼: 파일명, 폴더 경로, 메타데이터 순으로 생성 날짜를 유추합니다."""
+        path_obj = Path(rel_path)
+        filename = path_obj.name
+        
+        date_part = filename.split('-')[0]
+        if len(date_part) == 8 and date_part.isdigit():
+            try:
+                return datetime.strptime(date_part, '%Y%m%d')
+            except ValueError:
+                pass
+                
+        parts = path_obj.parent.parts
+        if len(parts) >= 3:
+            try:
+                return datetime.strptime(''.join(parts[-3:]), '%Y%m%d')
+            except ValueError:
+                pass
+                
+        try:
+            full_path = self.record_dir / rel_path
+            mtime = full_path.stat().st_mtime
+            return datetime.fromtimestamp(mtime).replace(hour=0, minute=0, second=0, microsecond=0)
+        except OSError:
+            return None
+        
+    def _cleanup_empty_folders(self) -> None:
+        """내부 헬퍼: records 폴더 내의 사용되지 않는 빈 폴더를 깊은 곳부터 역순으로 확인하여 삭제합니다."""
+        if not self.record_dir.exists():
+            return
+            
+        # 하위 폴더들의 경로 깊이(parts)를 기준으로 내림차순 정렬하여 가장 깊은 곳부터 탐색 (Bottom-Up)
+        folders = sorted(
+            [d for d in self.record_dir.rglob('*') if d.is_dir()],
+            key=lambda p: len(p.parts),
+            reverse=True
+        )
+        
+        cleaned_count = 0
+        for folder in folders:
+            try:
+                if not any(folder.iterdir()):
+                    folder.rmdir()
+                    cleaned_count += 1
+            except OSError:
+                pass
+                
+        if cleaned_count > 0:
+            print(f'\n[시스템 정리] 사용되지 않는 빈 날짜 폴더 {cleaned_count}개를 자동으로 삭제했습니다.')
 
     def record_audio(self) -> None:
         """시스템 마이크를 통해 사용자가 중단할 때까지 음성을 녹음한 후 파일명을 입력받아 저장합니다."""
@@ -97,14 +153,14 @@ class AudioRecorder:
         while filepath.exists():
             filepath = date_folder / f'{base_filename}_{counter}.wav'
             counter += 1
+
+        print(f'\n[알림] 오디오 임시 저장이 완료되었습니다. 이어서 텍스트 추출(STT)을 자동으로 시작합니다.')
             
         with wave.open(str(filepath), 'wb') as wf:
             wf.setnchannels(self.channels)
             wf.setsampwidth(audio.get_sample_size(self.format))
             wf.setframerate(self.rate)
             wf.writeframes(b''.join(frames))
-            
-        print(f'\n[알림] 오디오 임시 저장이 완료되었습니다. 이어서 텍스트 추출(STT)을 자동으로 시작합니다.')
         
         # 1. 방금 녹음한 파일로 STT 자동 추출 실행
         rel_path = filepath.relative_to(self.record_dir).as_posix()
@@ -137,77 +193,6 @@ class AudioRecorder:
         else:
             print(f'최종 파일이 저장되었습니다: {filepath}')
 
-    def play_audio(self, filename: str) -> None:
-        """저장된 음성 파일을 재생합니다."""
-        filepath = self.record_dir / filename
-        if not filepath.exists():
-            print('해당 파일을 찾을 수 없습니다.')
-            return
-            
-        # WAV 파일의 기본 헤더 크기(44바이트)와 같거나 작으면 실제 오디오 데이터가 없는 것입니다.
-        if filepath.stat().st_size <= 44:
-            print('\n[오류] 실제 음성 데이터가 없는 빈 파일입니다. 마이크 권한이나 녹음 시간을 확인해 주세요.')
-            return
-            
-        audio = pyaudio.PyAudio()
-        try:
-            with wave.open(str(filepath), 'rb') as wf:
-                stream = audio.open(
-                    format=audio.get_format_from_width(wf.getsampwidth()),
-                    channels=wf.getnchannels(),
-                    rate=wf.getframerate(),
-                    output=True
-                )
-                
-                print(f'{filename} 재생을 시작합니다... (중간에 종료하려면 "q" 키를 누르세요)')
-                data = wf.readframes(self.chunk)
-                
-                try:
-                    while data:
-                        stream.write(data)
-                        data = wf.readframes(self.chunk)
-                        
-                        if msvcrt and msvcrt.kbhit():
-                            key = msvcrt.getch()
-                            if key.lower() == b'q':
-                                while msvcrt.kbhit(): msvcrt.getch()  # 버퍼 비우기
-                                print('\n[재생 중단] 사용자의 요청으로 재생이 조기 종료되었습니다.')
-                                break
-                except KeyboardInterrupt:
-                    print('\n[재생 강제 중단] Ctrl+C 입력이 감지되어 재생을 안전하게 중단합니다.')
-                    
-                print('\n재생이 완료되었습니다.')
-                
-                try:
-                    stream.stop_stream()
-                    stream.close()
-                except Exception:
-                    pass
-        except Exception as e:
-            print(f'재생 중 오류가 발생했습니다: {e}')
-        finally:
-            audio.terminate()
-
-    def delete_audio(self, filename: str) -> None:
-        """저장된 음성 파일과 추출된 텍스트(CSV) 파일을 함께 삭제합니다."""
-        filepath = self.record_dir / filename
-        if not filepath.exists():
-            print('해당 파일을 찾을 수 없습니다.')
-            return
-            
-        csv_filepath = filepath.with_suffix('.csv')
-        
-        try:
-            filepath.unlink()
-            deleted_files = [filename]
-            
-            if csv_filepath.exists():
-                csv_filepath.unlink()
-                deleted_files.append(csv_filepath.name)
-                
-            print(f"다음 파일들이 삭제되었습니다: {', '.join(deleted_files)}")
-        except OSError as e:
-            print(f'파일 삭제 중 오류가 발생했습니다: {e}')
 
     def extract_text_from_audio(self, filename: str) -> None:
         """선택한 오디오 파일에서 STT를 수행하고 결과를 CSV로 저장합니다."""
@@ -266,11 +251,57 @@ class AudioRecorder:
         except Exception as e:
             print(f'STT 처리 중 오류가 발생했습니다: {e}')
 
-    def _format_seconds(self, seconds: float) -> str:
-        """초 단위의 시간을 MM:SS 형식의 문자열로 변환합니다."""
-        m, s = divmod(int(seconds), 60)
-        return f'{m:02d}:{s:02d}'
+    def list_all_records(self) -> List[str]:
+        """전체 녹음 파일 목록을 화면에 보여주고 리스트로 반환합니다."""
+        if not self.record_dir.exists():
+            print('녹음 폴더가 아직 존재하지 않습니다.')
+            return []
+            
+        files = self._get_all_wav_files()
+        if not files:
+            print('녹음된 파일이 없습니다.')
+            return []
+            
+        print('\n--- 전체 녹음 파일 목록 ---')
+        for idx, file in enumerate(files, 1):
+            print(f'{idx}. {file}')
+            
+        return files
+    
+    def _get_all_wav_files(self) -> List[str]:
+        """내부 헬퍼: records 폴더 내의 모든 wav 파일 상대 경로 반환"""
+        # rglob('*.wav')를 사용하면 os.walk보다 훨씬 직관적이고 빠르게 모든 하위 폴더의 wav 파일을 탐색합니다.
+        return [p.relative_to(self.record_dir).as_posix() for p in self.record_dir.rglob('*.wav')]
+    
+    def show_records_in_range(self, start_date_str: str, end_date_str: str) -> List[str]:
+        """보너스 기능: 특정 범위의 날짜에 저장된 녹음 파일을 보여줍니다."""
+        if not self.record_dir.exists():
+            print('녹음 폴더가 아직 존재하지 않습니다.')
+            return []
 
+        try:
+            start_date = datetime.strptime(start_date_str, '%Y%m%d')
+            end_date = datetime.strptime(end_date_str, '%Y%m%d')
+        except ValueError:
+            print('잘못된 날짜 형식입니다. YYYYMMDD 형식으로 입력해주세요.')
+            return []
+
+        print(f'\n--- {start_date_str} 부터 {end_date_str} 까지의 녹음 파일 ---')
+        matched_files = []
+        
+        for rel_path in self._get_all_wav_files():
+            file_date = self._extract_date(rel_path)
+            if file_date and start_date <= file_date <= end_date:
+                matched_files.append(rel_path)
+                
+        if not matched_files:
+            print('해당 기간에 녹음된 파일이 없습니다.')
+        else:
+            for idx, file in enumerate(matched_files, 1):
+                print(f'{idx}. {file}')
+                
+        return matched_files
+    
     def search_keyword_in_csv(self) -> None:
         """저장된 모든 CSV 파일에서 특정 키워드를 검색하여 출력합니다."""
         keyword = input('검색할 키워드를 입력하세요: ').strip()
@@ -305,106 +336,77 @@ class AudioRecorder:
         if not found:
             print('검색된 결과가 없습니다.')
 
-    def _cleanup_empty_folders(self) -> None:
-        """내부 헬퍼: records 폴더 내의 사용되지 않는 빈 폴더를 깊은 곳부터 역순으로 확인하여 삭제합니다."""
-        if not self.record_dir.exists():
+    def play_audio(self, filename: str) -> None:
+        """저장된 음성 파일을 재생합니다."""
+        filepath = self.record_dir / filename
+        if not filepath.exists():
+            print('해당 파일을 찾을 수 없습니다.')
             return
             
-        # 하위 폴더들의 경로 깊이(parts)를 기준으로 내림차순 정렬하여 가장 깊은 곳부터 탐색 (Bottom-Up)
-        folders = sorted(
-            [d for d in self.record_dir.rglob('*') if d.is_dir()],
-            key=lambda p: len(p.parts),
-            reverse=True
-        )
-        
-        cleaned_count = 0
-        for folder in folders:
-            try:
-                if not any(folder.iterdir()):
-                    folder.rmdir()
-                    cleaned_count += 1
-            except OSError:
-                pass
-                
-        if cleaned_count > 0:
-            print(f'\n[시스템 정리] 사용되지 않는 빈 날짜 폴더 {cleaned_count}개를 자동으로 삭제했습니다.')
-
-    def _get_all_wav_files(self) -> List[str]:
-        """내부 헬퍼: records 폴더 내의 모든 wav 파일 상대 경로 반환"""
-        # rglob('*.wav')를 사용하면 os.walk보다 훨씬 직관적이고 빠르게 모든 하위 폴더의 wav 파일을 탐색합니다.
-        return [p.relative_to(self.record_dir).as_posix() for p in self.record_dir.rglob('*.wav')]
-
-    def _extract_date(self, rel_path: str) -> Optional[datetime]:
-        """내부 헬퍼: 파일명, 폴더 경로, 메타데이터 순으로 생성 날짜를 유추합니다."""
-        path_obj = Path(rel_path)
-        filename = path_obj.name
-        
-        date_part = filename.split('-')[0]
-        if len(date_part) == 8 and date_part.isdigit():
-            try:
-                return datetime.strptime(date_part, '%Y%m%d')
-            except ValueError:
-                pass
-                
-        parts = path_obj.parent.parts
-        if len(parts) >= 3:
-            try:
-                return datetime.strptime(''.join(parts[-3:]), '%Y%m%d')
-            except ValueError:
-                pass
-                
+        # WAV 파일의 기본 헤더 크기(44바이트)와 같거나 작으면 실제 오디오 데이터가 없는 것입니다.
+        if filepath.stat().st_size <= 44:
+            print('\n[오류] 실제 음성 데이터가 없는 빈 파일입니다. 마이크 권한이나 녹음 시간을 확인해 주세요.')
+            return
+            
+        audio = pyaudio.PyAudio()
         try:
-            full_path = self.record_dir / rel_path
-            mtime = full_path.stat().st_mtime
-            return datetime.fromtimestamp(mtime).replace(hour=0, minute=0, second=0, microsecond=0)
-        except OSError:
-            return None
-
-    def show_records_in_range(self, start_date_str: str, end_date_str: str) -> List[str]:
-        """보너스 기능: 특정 범위의 날짜에 저장된 녹음 파일을 보여줍니다."""
-        if not self.record_dir.exists():
-            print('녹음 폴더가 아직 존재하지 않습니다.')
-            return []
-
-        try:
-            start_date = datetime.strptime(start_date_str, '%Y%m%d')
-            end_date = datetime.strptime(end_date_str, '%Y%m%d')
-        except ValueError:
-            print('잘못된 날짜 형식입니다. YYYYMMDD 형식으로 입력해주세요.')
-            return []
-
-        print(f'\n--- {start_date_str} 부터 {end_date_str} 까지의 녹음 파일 ---')
-        matched_files = []
+            with wave.open(str(filepath), 'rb') as wf:
+                stream = audio.open(
+                    format=audio.get_format_from_width(wf.getsampwidth()),
+                    channels=wf.getnchannels(),
+                    rate=wf.getframerate(),
+                    output=True
+                )
+                
+                print(f'{filename} 재생을 시작합니다... (중간에 종료하려면 "q" 키를 누르세요)')
+                data = wf.readframes(self.chunk)
+                
+                try:
+                    while data:
+                        stream.write(data)
+                        data = wf.readframes(self.chunk)
+                        
+                        if msvcrt and msvcrt.kbhit():
+                            key = msvcrt.getch()
+                            if key.lower() == b'q':
+                                while msvcrt.kbhit(): msvcrt.getch()  # 버퍼 비우기
+                                print('\n[재생 중단] 사용자의 요청으로 재생이 조기 종료되었습니다.')
+                                break
+                except KeyboardInterrupt:
+                    print('\n[재생 강제 중단] Ctrl+C 입력이 감지되어 재생을 안전하게 중단합니다.')
+                    
+                print('\n재생이 완료되었습니다.')
+                
+                try:
+                    stream.stop_stream()
+                    stream.close()
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f'재생 중 오류가 발생했습니다: {e}')
+        finally:
+            audio.terminate()
+    
+    def delete_audio(self, filename: str) -> None:
+        """저장된 음성 파일과 추출된 텍스트(CSV) 파일을 함께 삭제합니다."""
+        filepath = self.record_dir / filename
+        if not filepath.exists():
+            print('해당 파일을 찾을 수 없습니다.')
+            return
+            
+        csv_filepath = filepath.with_suffix('.csv')
         
-        for rel_path in self._get_all_wav_files():
-            file_date = self._extract_date(rel_path)
-            if file_date and start_date <= file_date <= end_date:
-                matched_files.append(rel_path)
+        try:
+            filepath.unlink()
+            deleted_files = [filename]
+            
+            if csv_filepath.exists():
+                csv_filepath.unlink()
+                deleted_files.append(csv_filepath.name)
                 
-        if not matched_files:
-            print('해당 기간에 녹음된 파일이 없습니다.')
-        else:
-            for idx, file in enumerate(matched_files, 1):
-                print(f'{idx}. {file}')
-                
-        return matched_files
-
-    def list_all_records(self) -> List[str]:
-        """전체 녹음 파일 목록을 화면에 보여주고 리스트로 반환합니다."""
-        if not self.record_dir.exists():
-            print('녹음 폴더가 아직 존재하지 않습니다.')
-            return []
-            
-        files = self._get_all_wav_files()
-        if not files:
-            print('녹음된 파일이 없습니다.')
-            return []
-            
-        print('\n--- 전체 녹음 파일 목록 ---')
-        for idx, file in enumerate(files, 1):
-            print(f'{idx}. {file}')
-            
-        return files
+            print(f"다음 파일들이 삭제되었습니다: {', '.join(deleted_files)}")
+        except OSError as e:
+            print(f'파일 삭제 중 오류가 발생했습니다: {e}')
 
 
 def select_file_index(files: List[str], action_name: str) -> Optional[str]:
