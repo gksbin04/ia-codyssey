@@ -329,12 +329,12 @@ class WeatherVisualizer:
     
     @staticmethod
     def save_summary_png(rows):
-        """요구사항에 맞추어 10일 단위로 데이터를 압축하고, 온도와 폭풍 그래프를 분리하여 생성합니다."""
+        """원본 데이터를 1:1로 매핑하여 데이터 유실 없이 온도와 폭풍 그래프를 분리 생성합니다."""
         WeatherVisualizer._create_png(rows, 'TEMP', 'mars_temp_summary.png')
         WeatherVisualizer._create_png(rows, 'STORM', 'mars_storm_summary.png')
         print('결과 그래프가 각각 분리되어 저장되었습니다.')
-        print('-> 📈 [온도 그래프] mars_temp_summary.png (0~100도 고정, 100일 단위 눈금)')
-        print('-> 🚨 [폭풍 그래프] mars_storm_summary.png (10일 단위 압축 막대그래프)')
+        print('-> 📈 [온도 그래프] mars_temp_summary.png (동적 스케일링, DDA 연속선, 100일 눈금)')
+        print('-> 🚨 [폭풍 그래프] mars_storm_summary.png (데이터 유실 없는 원본 1:1 매핑 막대그래프)')
 
     @staticmethod
     def _create_png(rows, mode, filename):
@@ -352,18 +352,12 @@ class WeatherVisualizer:
         graph_width = width - margin_left - margin_right
         graph_height = height - margin_top - margin_bottom
         
-        # 1. 10일 단위로 데이터 압축 (Data Binning/Smoothing 기법 적용)
-        chunk_size = 10
-        compressed = []
-        for i in range(0, len(rows), chunk_size):
-            chunk = rows[i:i+chunk_size]
-            average_temp = int(sum(record[1] for record in chunk) / len(chunk))
-            average_storm = int(sum(record[2] for record in chunk) / len(chunk))
-            compressed.append((average_temp, average_storm))
+        # 1. 원본 데이터 유지 (압축 없이 1일 = 1픽셀 매핑하여 데이터 신뢰성 100% 보장)
+        compressed = [(record[1], record[2]) for record in rows]
 
-        # 동적 스케일링을 위한 데이터 최대값 도출 (최소 100 이상 보장)
-        max_temp_val = max(100, max(data[0] for data in compressed))
-        max_storm_val = max(100, max(data[1] for data in compressed))
+        # 동적 스케일링을 위한 데이터 최대값 도출 (상단 보기 편하도록 20 마진 추가)
+        max_temp_val = max(100, max(data[0] for data in compressed)) + 20
+        max_storm_val = max(100, max(data[1] for data in compressed)) + 20
 
         # 2. 픽셀 데이터 초기화 (흰색 배경)
         pixels = [[[255, 255, 255] for _ in range(width)] for _ in range(height)]
@@ -431,17 +425,23 @@ class WeatherVisualizer:
                 center_x = margin_left + int(((i + 0.5) / len(compressed)) * graph_width)
                 temp_y = (height - margin_bottom) - int(temp_ratio * graph_height)
                 
-                # 이전 점에서 현재 점까지 선 그리기
+                # 현재 점 먼저 찍기
+                if margin_top <= temp_y < height - margin_bottom:
+                    pixels[temp_y][center_x] = [0, 0, 255]
+                    if temp_y + 1 < height - margin_bottom: pixels[temp_y+1][center_x] = [0, 0, 255]
+
+                # 이전 점에서 현재 점까지 빈틈없이 선 그리기 (DDA 알고리즘 적용)
                 if prev_x is not None and prev_y is not None:
-                    steps = center_x - prev_x
+                    dx_line = center_x - prev_x
+                    dy_line = temp_y - prev_y
+                    steps = max(abs(dx_line), abs(dy_line))
                     if steps > 0:
-                        for dx in range(steps):
-                            curr_x = prev_x + dx
-                            curr_y = prev_y + int((temp_y - prev_y) * (dx / steps))
+                        for s in range(steps + 1):
+                            curr_x = prev_x + int(dx_line * (s / steps))
+                            curr_y = prev_y + int(dy_line * (s / steps))
                             if margin_top <= curr_y < height - margin_bottom:
                                 pixels[curr_y][curr_x] = [0, 0, 255]
                                 if curr_y + 1 < height - margin_bottom: pixels[curr_y+1][curr_x] = [0, 0, 255]
-                                if curr_y + 2 < height - margin_bottom: pixels[curr_y+2][curr_x] = [0, 0, 255]
                 
                 prev_x, prev_y = center_x, temp_y
 
@@ -466,8 +466,11 @@ class WeatherVisualizer:
                     x_start = margin_left + int((i / len(compressed)) * graph_width)
                     x_end = margin_left + int(((i + 1) / len(compressed)) * graph_width)
                     
-                    # 막대 사이에 1픽셀 간격을 두어 독립된 블록으로 보이게 처리
-                    for x in range(x_start, x_end - 1):
+                    # 데이터가 1000개일 때는 간격을 두면 막대가 안 그려질 수 있으므로 최소 1픽셀 보장
+                    if x_end <= x_start:
+                        x_end = x_start + 1
+                        
+                    for x in range(x_start, x_end):
                         for y in range(start_y, height - margin_bottom):
                             pixels[y][x] = storm_color
 

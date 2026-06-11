@@ -94,8 +94,8 @@ flowchart TD
 
 ### 4단계: 커스텀 시각화 엔진 (`WeatherVisualizer`)
 - `matplotlib` 일체 없이 파이썬 표준 라이브러리만으로 픽셀을 계산해 PNG를 생성합니다.
-- **데이터 스무딩(Binning):** 1000일 치 데이터를 10일 단위 평균으로 압축하여 가독성 높은 트렌드를 보여줍니다.
-- **동적 스케일링:** 0~100도, 0~100강도에 맞춰 동적 Y축 눈금을 생성하며 2개의 독립된 그래프 파일로 분리 저장합니다.
+- **연속선 렌더링 (DDA 알고리즘):** 온도가 급변하는 구간에서도 점이 끊어지지 않도록 선형 보간 알고리즘을 적용해 매끄러운 꺾은선을 만듭니다.
+- **동적 스케일링:** 최고 데이터치에 맞춰 동적으로 Y축을 설정하고 상단 여백(+20)을 주어 가독성을 확보했습니다. (온도/폭풍 분리 저장)
 
 ## ✅ 과제 요구사항 체크리스트
 
@@ -119,6 +119,8 @@ flowchart TD
 ```sql
 USE mars_db;
 SELECT COUNT(*) FROM mars_weather;          -- 1000이 나오면 정상 적재
-SELECT * FROM mars_weather WHERE storm > 70
-SELECT mars_date, temp, storm FROM mars_weather ORDER BY mars_date DESC LIMIT 10;
+SELECT * FROM mars_weather ORDER BY mars_date DESC LIMIT 10;
+SELECT * FROM mars_weather WHERE storm <= 30; -- 안전
+SELECT * FROM mars_weather WHERE 30 < storm <= 70; -- 폭풍 주위
+SELECT * FROM mars_weather WHERE 71 <= storm; -- 외출 금지
 ```
