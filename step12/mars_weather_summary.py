@@ -356,7 +356,7 @@ class WeatherVisualizer:
         compressed = [(record[1], record[2]) for record in rows]
 
         # 동적 스케일링을 위한 데이터 최대값 도출 (상단 보기 편하도록 20 마진 추가)
-        max_temp_val = max(100, max(data[0] for data in compressed)) + 20
+        max_temp_val = max(100, max(data[0] for data in compressed))
         max_storm_val = max(100, max(data[1] for data in compressed)) + 20
 
         # 2. 픽셀 데이터 초기화 (흰색 배경)
