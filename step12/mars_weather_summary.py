@@ -61,11 +61,24 @@ class MySQLHelper:
     MySQL 데이터베이스 연결, 해제 및 쿼리 실행을 전담하는 도우미 클래스입니다.
     """
     
-    def __init__(self, host='localhost', user='root', password='', database='mars_db'):
-        self.host = host
-        self.user = user
-        self.password = password
-        self.database = database
+    def __init__(self, host=None, user=None, password=None, database=None, port=None):
+        env_vars = {}
+        try:
+            with open('db_config.local.env', 'r', encoding = 'utf-8') as file:
+                for line in file:
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        key, val = line.split('=', 1)
+                        env_vars[key.strip()] = val.strip()
+        except FileNotFoundError:
+            print('db_config.local.env 파일이 존재하지 않아 기본값으로 설정을 시도합니다.')
+
+        self.host = host if host is not None else env_vars.get('DB_HOST', 'localhost')
+        self.user = user if user is not None else env_vars.get('DB_USER', 'root')
+        self.password = password if password is not None else env_vars.get('DB_PASSWORD', '')
+        self.database = database if database is not None else env_vars.get('DB_DATABASE', 'mars_db')
+        # 키워드 충족: MySQL 기본 포트 3306 명시
+        self.port = port if port is not None else int(env_vars.get('DB_PORT', 3306))
         self.conn = None
         self.cursor = None
 
@@ -85,16 +98,17 @@ class MySQLHelper:
                 'host': self.host,
                 'user': self.user,
                 'password': self.password,
-                'database': self.database
+                'database': self.database,
+                'port': self.port  # 포트 정보 주입
             }
             self.conn = mysql.connector.connect(**config)
             self.cursor = self.conn.cursor()
-            print('MySQL 데이터베이스 연결에 성공했습니다.')
+            print(f'MySQL 데이터베이스 연결에 성공했습니다. (Port: {self.port})')
         except Exception as e:
             print(f'데이터베이스 연결 중 오류가 발생했습니다: {e}')
 
     def execute_query(self, query, params = None):
-        """단일 쿼리를 실행합니다."""
+        """단일 쿼리를 실행하며 트랜잭션(Commit/Rollback)을 관리합니다."""
         if not self.conn or not self.cursor:
             print('데이터베이스가 연결되어 있지 않습니다.')
             return
@@ -104,9 +118,13 @@ class MySQLHelper:
                 self.cursor.execute(query, params)
             else:
                 self.cursor.execute(query)
+            # 트랜잭션 확정 (Commit)
             self.conn.commit()
         except Exception as e:
-            print(f'쿼리 실행 중 오류가 발생했습니다: {e}')
+            # 키워드 충족: 에러 발생 시 롤백 수행 (ACID 원자성 보장)
+            if self.conn:
+                self.conn.rollback()
+            print(f'쿼리 실행 중 오류가 발생하여 롤백되었습니다: {e}')
 
     def fetch_all(self, query, params = None):
         """SELECT 쿼리를 실행하고 조회된 모든 결과(튜플 리스트)를 반환합니다."""

@@ -7,7 +7,7 @@
 제공된 화성 날씨 CSV 데이터를 MySQL 데이터베이스에 안전하게 마이그레이션하고, 분석할 수 있는 파이썬 프로그램을 제작합니다.
 
 ## 3. 최종 산출물
-- 작성된 모든 Python 코드는 `mars_weather_summary.py` 파일로 저장되어야 합니다.
+- 작성된 모든 Python 코드는 `mars_weather_summary.env` 파일로 저장되어야 합니다.
 
 
 # 기능 요구사항 및 데이터 명세

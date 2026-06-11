@@ -2,7 +2,7 @@ CREATE DATABASE IF NOT EXISTS mars_db
     DEFAULT CHARACTER SET utf8mb4
     DEFAULT COLLATE utf8mb4_unicode_ci;
 
-USE codyssey;
+USE mars_db;
 
 DROP TABLE IF EXISTS mars_weather;
 

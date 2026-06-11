@@ -8,7 +8,7 @@
 |------|------|
 | `mars_weather_summary.py` | CSV 마이그레이션, 날씨 주기 분석, 시각화(PNG) 엔진을 포함한 메인 스크립트 |
 | `mars_weathers_data.csv` | 화성 날씨 원본 데이터 (1000행) |
-| `db_config.local.py` | [보안] 로컬 DB 접속 정보 (Git 업로드 제외) |
+| `db_config.local.env` | [보안] 로컬 DB 접속 정보 (Git 업로드 제외) |
 | `mars_temp_summary.png` | [출력물] 온도 변화 추이 선 그래프 (실행 시 생성) |
 | `mars_storm_summary.png` | [출력물] 모래 폭풍 강도 막대그래프 (실행 시 생성) |
 
@@ -22,9 +22,9 @@ pip install mysql-connector-python
 ```
 
 3. **보안 설정 파일 작성**
-루트 경로에 `db_config.local.py` 파일을 생성하고 아래와 같이 접속 정보를 입력합니다.
+루트 경로에 `db_config.local.env` 파일을 생성하고 아래와 같이 접속 정보를 입력합니다.
 ```python
-# db_config.local.py
+# db_config.local.env
 DB_CONFIG = {
     'host': '127.0.0.1',
     'user': 'root',
