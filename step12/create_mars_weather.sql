@@ -1,0 +1,14 @@
+CREATE DATABASE IF NOT EXISTS mars_db
+    DEFAULT CHARACTER SET utf8mb4
+    DEFAULT COLLATE utf8mb4_unicode_ci;
+
+USE codyssey;
+
+DROP TABLE IF EXISTS mars_weather;
+
+CREATE TABLE IF NOT EXISTS mars_weather (
+    weather_id INT AUTO_INCREMENT PRIMARY KEY,
+    mars_date DATETIME NOT NULL,
+    temp INT NOT NULL,
+    storm INT NOT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
